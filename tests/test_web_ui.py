@@ -23,7 +23,7 @@ def client(tmp_path):
 
 
 def test_pages_render(client):
-    for path in ("/", "/vacancies", "/applications", "/resume", "/settings", "/runs"):
+    for path in ("/", "/actions", "/vacancies", "/applications", "/resume", "/settings", "/runs"):
         response = client.get(path)
         assert response.status_code == 200, path
         assert "job-bless" in response.text
@@ -47,6 +47,7 @@ def test_settings_roundtrip(client):
         follow_redirects=False,
     )
     assert response.status_code == 303
+    assert response.headers["location"] == "/settings?saved=1"
 
     settings = client.app.state.settings
     assert settings.get("matching.threshold") == 85
@@ -252,7 +253,7 @@ def test_refreshed_lamp_does_not_retrigger_itself(client):
     assert "every 10s" in fragment
 
     # The copy embedded in a page does need the initial load.
-    assert "load, every 10s" in client.get("/partials/status").text
+    assert "load, every 10s" in client.get("/").text
 
 
 def test_compact_lamp_shows_only_model(client):
@@ -276,7 +277,7 @@ def test_compact_lamp_shows_only_model(client):
     assert "есть подключение" in full and "проверить" in full
 
 
-def test_panel_lamp_is_compact_and_page_lamp_is_not(client):
+def test_panel_has_llm_settings_button_and_dashboard_keeps_health_status(client):
     from src.llm.health import LLMHealth
 
     monitor = client.app.state.llm_health
@@ -284,8 +285,9 @@ def test_panel_lamp_is_compact_and_page_lamp_is_not(client):
     monitor._checked_monotonic = float("inf")
 
     panel = client.get("/partials/status").text
-    assert "llm-status ok compact" in panel
-    assert 'class="llm-text"' not in panel  # compact: lamp + model only
+    assert 'aria-label="Настроить нейросеть"' in panel
+    assert "search-model" not in panel
+    assert "llm-status" not in panel
 
     dashboard = client.get("/").text
     assert 'class="llm-text"' in dashboard  # full lamp with the message
@@ -352,7 +354,7 @@ def test_scroll_settings_are_behind_a_spoiler(client):
     assert "<details" in page and "Тонкая настройка" in page
 
     # Everyday fields stay visible, the scroll knobs move inside the spoiler.
-    before_details = page.split("<details")[0]
+    before_details = page.split('class="settings-form"', 1)[1].split("<details", 1)[0]
     assert 'name="scroller.load_mode"' in before_details
     assert 'name="scroller.max_pages"' not in before_details
     assert 'name="scroller.max_pages"' in page
@@ -375,10 +377,36 @@ def test_spoiler_opens_when_a_value_differs_from_default(client):
     assert "<details class=\"advanced\" open" in page
 
 
-def test_runner_radios_are_visually_hidden(client):
-    css = client.get("/static/app.css").text
-    assert ".runner-option input" in css
-    assert "opacity: 0" in css.split(".runner-option input")[1][:200]
+def _stage_button(panel, kind):
+    import re
+
+    match = re.search(r'<button\b[^>]*hx-post="/actions/' + kind + r'"[^>]*>', panel)
+    assert match, f"Missing stage button: {kind}"
+    return match.group()
+
+
+def test_new_user_sees_disabled_actions_with_resume_setup(client):
+    import re
+
+    panel = client.get("/partials/status").text
+    assert 'href="/resume#resume-import">Добавить резюме</a>' in panel
+    assert panel.count('class="resume-banner"') == 1
+    assert panel.count('data-action-id=') == 8
+    assert "Начните с вашего резюме" not in panel
+    assert 'aria-label="Настроить нейросеть"' in panel
+    assert "Собрать вакансии" in panel
+    assert "Оценить соответствие вакансий резюме" in panel
+    for kind in ("collect", "score", "apply"):
+        assert "disabled" in _stage_button(panel, kind)
+        assert f'aria-describedby="{kind}-context"' in _stage_button(panel, kind)
+    assert "Собрать вакансии" in panel
+    assert 'hx-get="/actions/search-settings"' in panel
+    assert 'id="panel-search-query"' not in panel
+    modal = client.get("/actions/search-settings").text
+    query = re.search(r'<input\b[^>]*id="panel-search-query"[^>]*>', modal)
+    assert query and "disabled" in query.group()
+    assert 'label for="panel-search-query">Какую работу ищете</label>' in modal
+    assert 'type="radio"' not in panel
 
 
 def test_settings_page_requests_model_dropdown(client):
@@ -400,12 +428,78 @@ def test_static_assets_are_versioned_and_revalidated(client):
 
 # --- runner -------------------------------------------------------------
 
-def test_runner_renders_options_and_start_button(client):
+def test_resume_unlocks_actions_and_explains_missing_setup(client):
+    from anyio.from_thread import start_blocking_portal
+
+    repository = client.app.state.repository
+    with start_blocking_portal() as portal:
+        resume_id = portal.call(repository.upsert_resume, Resume(source_url="https://hh.ru/resume/qa", title="Разработчик"))
+        portal.call(repository.set_active_resume, resume_id)
+
     panel = client.get("/partials/status").text
-    for kind in ("collect", "score", "apply", "pipeline", "login"):
-        assert f'value="{kind}"' in panel
-    assert "Старт" in panel
-    assert 'hx-post="/actions/start"' in panel
+    assert "Укажите должность в окне «Настроить поиск»." in panel
+    assert "Настроить нейросеть для оценки" in panel
+    assert "disabled" in _stage_button(panel, "collect")
+    assert "disabled" in _stage_button(panel, "score")
+    assert "disabled" not in _stage_button(panel, "apply")
+
+    with start_blocking_portal() as portal:
+        portal.call(repository.update_resume_fields, resume_id, "Python", "")
+        portal.call(client.app.state.settings.save, {"llm.enabled": True, "matching.threshold": 85, "apply.batch_limit": 3})
+
+    for path in ("/partials/status", "/actions"):
+        panel = client.get(path).text
+        for kind in ("collect", "score", "apply"):
+            assert "disabled" not in _stage_button(panel, kind)
+        assert "Ищем: «Python»" in panel
+        assert "До 3 откликов" in panel
+        assert "оценка от 85" in panel
+
+
+def test_panel_query_edit_preserves_resume_context(client):
+    from anyio.from_thread import start_blocking_portal
+
+    repository = client.app.state.repository
+    with start_blocking_portal() as portal:
+        resume_id = portal.call(repository.upsert_resume, Resume(
+            source_url="https://hh.ru/resume/query-test", title="Разработчик",
+            context_text="Опыт разработки на Python", search_query="Python",
+        ))
+        portal.call(repository.set_active_resume, resume_id)
+
+    modal = client.get("/actions/search-settings").text
+    assert 'value="Python"' in modal
+    assert f'hx-post="/actions/resume/{resume_id}/search-query"' in modal
+
+    response = client.post(f"/actions/resume/{resume_id}/search-query", data={"search_query": "  Backend Python  "})
+    assert response.status_code == 200
+    assert response.headers["HX-Refresh"] == "true"
+    assert "Ищем: «Backend Python»" in response.text
+    assert "disabled" not in _stage_button(response.text, "collect")
+    with start_blocking_portal() as portal:
+        saved = portal.call(repository.get_resume, resume_id)
+    assert saved.search_query == "Backend Python"
+    assert saved.context_text == "Опыт разработки на Python"
+
+    response = client.post(f"/actions/resume/{resume_id}/search-query", data={"search_query": " "})
+    assert "disabled" in _stage_button(response.text, "collect")
+    response = client.post(f"/actions/resume/{resume_id + 1}/search-query", data={"search_query": "Java"})
+    assert "Активное резюме изменилось" in response.text
+
+
+def test_pipeline_dialog_matches_effective_settings(client):
+    from anyio.from_thread import start_blocking_portal
+
+    settings = client.app.state.settings
+    with start_blocking_portal() as portal:
+        portal.call(settings.save, {"schedule.do_collect": True, "schedule.do_apply": True, "apply.mode": "manual", "matching.enabled": False})
+    modal = client.get("/actions/pipeline-settings").text
+    assert modal.count(" checked") == 1
+
+    with start_blocking_portal() as portal:
+        portal.call(settings.save, {"schedule.do_collect": True, "schedule.do_apply": True, "apply.mode": "auto", "matching.enabled": False})
+    modal = client.get("/actions/pipeline-settings").text
+    assert modal.count(" checked") == 2
 
 
 def test_start_requires_known_kind(client):
@@ -537,3 +631,261 @@ def test_task_kinds_cover_all_jobs():
     assert {TaskKind.COLLECT, TaskKind.SCORE, TaskKind.APPLY, TaskKind.RESUME_IMPORT, TaskKind.LOGIN}
     assert callable(jobs.collect_job) and callable(jobs.score_job) and callable(jobs.apply_job)
     assert callable(jobs.resume_import_job) and callable(jobs.login_job) and callable(jobs.pipeline_job)
+
+
+def test_pipeline_modal_saves_only_its_settings(client):
+    from anyio.from_thread import start_blocking_portal
+
+    settings = client.app.state.settings
+    before = settings.all_values()
+    response = client.post('/actions/pipeline-settings', data={
+        'schedule.do_collect': '1', 'schedule.do_score': '1', 'schedule.do_apply': '1',
+        'llm.enabled': '1', 'schedule.enabled': '1',  # unrelated input is ignored
+    })
+    assert response.status_code == 200
+    assert response.headers['HX-Retarget'] == '#task-panel'
+    assert 'pipelineSettingsSaved' in response.headers['HX-Trigger-After-Settle']
+    changed_keys = {'schedule.do_collect', 'schedule.do_score', 'schedule.do_apply', 'matching.enabled', 'apply.mode'}
+    for key, value in before.items():
+        if key not in changed_keys:
+            assert settings.get(key) == value, key
+    assert settings.get('matching.enabled') is True
+    assert settings.get('apply.mode') == 'auto'
+    assert not client.app.state.tasks.is_busy
+    assert client.get('/actions/pipeline-settings').text.count(' checked') == 3
+
+    # The full settings form no longer owns the stage flags.
+    client.post('/actions/settings', data={'matching.threshold': '85'})
+    for key in ('schedule.do_collect', 'schedule.do_score', 'schedule.do_apply'):
+        assert settings.get(key) is True
+
+    # Turning off every stage persists; no old checkbox value sneaks back in.
+    client.post('/actions/pipeline-settings', data={})
+    with start_blocking_portal() as portal:
+        portal.call(settings.load)
+    for key in ('schedule.do_collect', 'schedule.do_score', 'schedule.do_apply'):
+        assert settings.get(key) is False
+    assert 'disabled' in _stage_button(client.get('/partials/status').text, 'pipeline')
+
+
+def test_stage_controls_moved_out_of_settings_and_tools_are_visible(client):
+    panel = client.get('/partials/status').text
+    main, tools = panel.split('id="search-tools"', 1)
+    assert 'Выполнить несколько действий подряд' in main
+    assert 'Настроить действия' in main
+    assert '<details' not in panel
+    assert 'Войти в hh.ru' in tools
+    page = client.get('/settings').text
+    assert 'id="pipeline-dialog"' not in page
+    assert 'id="pipeline-dialog"' in client.get("/actions").text
+    for key in ('schedule.do_collect', 'schedule.do_score', 'schedule.do_apply'):
+        assert f'name="{key}"' not in page
+        assert f'name="{key}"' in client.get('/actions/pipeline-settings').text
+
+
+@pytest.mark.parametrize("status", ["completed", "failed", "cancelled"])
+def test_dismiss_finished_task_preserves_history(client, status):
+    from anyio.from_thread import start_blocking_portal
+    from src.db.models import TaskRun, TaskStatus
+    from src.web.tasks import TaskState
+
+    manager = client.app.state.tasks
+    state = TaskState(id="dismiss-qa", kind=TaskKind.LOGIN, status=TaskStatus(status), error_message="Test failure")
+    manager.lane().current = state
+    manager.history.append(state)
+    with start_blocking_portal() as portal:
+        portal.call(manager.repository.create_task_run, TaskRun(id=state.id, kind=state.kind))
+        portal.call(manager.repository.finish_task_run, state.id, state.status, {}, state.error_message)
+    assert '>Скрыть</button>' in client.get('/partials/status').text
+    # An old page cannot dismiss a different task's message.
+    client.post('/actions/dismiss', data={'task_id': 'old-task'})
+    assert manager.current is state
+    response = client.post('/actions/dismiss', data={'task_id': state.id})
+    assert response.status_code == 200
+    assert manager.current is None
+    assert 'dismiss-task' not in response.text
+    assert manager.history == [state]
+    with start_blocking_portal() as portal:
+        runs = portal.call(manager.repository.list_task_runs)
+    assert runs[0]['id'] == state.id and runs[0]['status'] == status
+    assert runs[0]['error_message'] == 'Test failure'
+    assert 'Test failure' in client.get('/runs').text
+
+
+def test_cannot_dismiss_running_task(client):
+    from src.web.tasks import TaskState
+
+    manager = client.app.state.tasks
+    state = TaskState(id="running-qa", kind=TaskKind.LOGIN)
+    manager.lane().current = state
+    assert '>Скрыть</button>' not in client.get('/partials/status').text
+    client.post('/actions/dismiss', data={'task_id': state.id})
+    assert manager.current is state
+
+
+def test_action_panel_and_console_only_appear_on_actions_page(client):
+    for path in ("/", "/vacancies", "/applications", "/resume", "/settings", "/runs"):
+        page = client.get(path).text
+        assert 'href="/actions"' in page
+        for element_id in ("task-panel", "console-block", "pipeline-dialog", "search-dialog"):
+            assert f'id="{element_id}"' not in page
+    page = client.get('/actions').text
+    for element_id in ("task-panel", "console-block", "pipeline-dialog", "search-dialog"):
+        assert f'id="{element_id}"' in page
+    assert 'href="/actions" class="active"' in page
+
+
+def test_selected_vacancies_start_and_redirect_to_actions(client, monkeypatch):
+    from unittest.mock import AsyncMock
+    from src.web import jobs
+
+    job = AsyncMock(return_value={})
+    monkeypatch.setattr(jobs, 'apply_job', job)
+    response = client.post('/actions/apply', data={'return_to': 'actions', 'vacancy_ids': ['12', '15']}, follow_redirects=False)
+    assert response.status_code == 303
+    assert response.headers['location'] == '/actions'
+    assert client.app.state.tasks.current.params['vacancy_ids'] == [12, 15]
+    page = client.get('/vacancies').text
+    assert 'hx-target="#task-panel"' not in page
+
+
+@pytest.mark.parametrize("action,lane,kind", [
+    ("collect", "main", TaskKind.COLLECT), ("score", "main", TaskKind.SCORE),
+    ("apply", "main", TaskKind.APPLY), ("pipeline", "main", TaskKind.COLLECT),
+    ("login", "main", TaskKind.LOGIN), ("resume_touch", "main", TaskKind.RESUME_TOUCH),
+    ("profile", "profile", TaskKind.PROFILE), ("activity", "activity", TaskKind.ACTIVITY),
+])
+def test_running_card_switches_play_to_stop_in_its_lane(client, action, lane, kind):
+    import asyncio
+    import re
+    from anyio.from_thread import start_blocking_portal
+
+    manager = client.app.state.tasks
+
+    async def idle_job(ctx):
+        while not ctx.should_stop():
+            await asyncio.sleep(.01)
+        return {}
+
+    async def start():
+        await manager.start(kind, idle_job, lane=lane, params={"action": action})
+
+    async def wait_finished():
+        await asyncio.wait_for(manager.lane(lane).task, 2)
+
+    def card(html, name):
+        return re.search(r'<article[^>]*data-action-id="' + name + r'"[^>]*>(.*?)</article>', html, re.S).group()
+
+    with start_blocking_portal() as portal:
+        portal.call(start)
+        panel = client.get('/partials/status').text
+        active = card(panel, action)
+        assert 'is-running' in active
+        assert 'is-stop' in active
+        assert 'hx-post="/actions/stop"' in active
+        assert f'"lane": "{lane}"' in active
+        assert 'aria-label="Остановить:' in active
+        if action == 'pipeline':
+            assert 'is-stop' not in card(panel, 'collect')
+        if lane != 'main':
+            assert 'disabled' not in _stage_button(card(panel, 'login'), 'login')
+        client.post('/actions/stop', data={'lane': lane})
+        portal.call(wait_finished)
+    stopped = card(client.get('/partials/status').text, action)
+    assert 'is-running' not in stopped
+    assert 'is-stop' not in stopped
+    assert 'class="action-control"' in stopped
+
+
+def test_apply_settings_modal_persists_only_reply_settings(client):
+    from anyio.from_thread import start_blocking_portal
+    from src.web.routes.actions import APPLY_SETTING_KEYS
+
+    page = client.get('/actions').text
+    assert 'aria-label="Настроить отклики"' in page
+    assert 'id="apply-dialog"' in page
+    modal = client.get('/actions/apply-settings').text
+    for key in APPLY_SETTING_KEYS:
+        assert f'name="{key}"' in modal
+    assert 'name="apply.skip_questions"' not in modal
+    settings = client.app.state.settings
+    before = settings.all_values()
+    response = client.post('/actions/apply-settings', data={
+        'matching.threshold': '84', 'apply.batch_limit': '12', 'apply.delay_sec': '3.5',
+        'apply.recheck_with_llm': '1', 'apply.mode': 'auto', 'cover_letter.enabled': '1',
+        'cover_letter.when': 'always', 'cover_letter.model': 'letter-test',
+        'cover_letter.max_chars': '900', 'cover_letter.prompt': 'Кратко',
+        'cover_letter.fallback_text': 'Здравствуйте!', 'llm.enabled': '1',
+        'schedule.do_apply': '1',
+    })
+    assert response.headers['HX-Trigger-After-Settle'] == 'applySettingsSaved'
+    assert response.headers['HX-Retarget'] == '#task-panel'
+    assert not client.app.state.tasks.is_busy
+    with start_blocking_portal() as portal:
+        portal.call(settings.load)
+    assert settings.get('matching.threshold') == 84
+    assert settings.get('apply.batch_limit') == 12
+    assert settings.get('apply.delay_sec') == 3.5
+    assert settings.get('apply.recheck_with_llm') is True
+    assert settings.cover_letter_config().when == 'always'
+    assert settings.cover_letter_config().fallback_text == 'Здравствуйте!'
+    for key, value in before.items():
+        if key not in APPLY_SETTING_KEYS:
+            assert settings.get(key) == value
+    assert 'value="84"' in client.get('/settings').text
+    assert 'value="84"' in client.get('/actions/apply-settings').text
+    client.post('/actions/apply-settings', data={'matching.threshold': '84'})
+    assert settings.get('cover_letter.enabled') is False
+    assert settings.get('apply.recheck_with_llm') is False
+
+
+def test_invalid_reply_settings_preserve_input_and_change_nothing(client):
+    from anyio.from_thread import start_blocking_portal
+
+    settings = client.app.state.settings
+    before = settings.all_values()
+    response = client.post('/actions/apply-settings', data={
+        'matching.threshold': '84', 'apply.batch_limit': '999',
+        'cover_letter.prompt': 'Мой текст',
+    })
+    assert 'максимум' in response.text
+    assert 'value="999"' in response.text
+    assert 'Мой текст' in response.text
+    assert 'HX-Trigger-After-Settle' not in response.headers
+    assert settings.all_values() == before
+    with start_blocking_portal() as portal:
+        portal.call(settings.load)
+    assert settings.all_values() == before
+
+
+
+def test_empty_vacancy_selection_never_starts_automatic_batch(client):
+    response = client.post('/actions/apply', data={'return_to': 'actions'}, follow_redirects=False)
+    assert response.status_code == 303
+    assert response.headers['location'] == '/vacancies'
+    assert client.app.state.tasks.current is None
+
+
+def test_vacancy_empty_states_distinguish_filters(client):
+    empty = client.get('/vacancies').text
+    assert 'Пока нет сохранённых вакансий' in empty
+    assert 'id="apply-selected"' not in empty
+    filtered = client.get('/vacancies?search=nonexistent').text
+    assert 'Нет вакансий по этим фильтрам' in filtered
+    assert 'Сбросить фильтры' in filtered
+
+
+def test_vacancy_pagination_preserves_all_filters(client, monkeypatch):
+    import html
+    import re
+    from urllib.parse import parse_qs, urlparse
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr(client.app.state.repository, 'count_vacancies', AsyncMock(return_value=30))
+    monkeypatch.setattr(client.app.state.repository, 'list_vacancies', AsyncMock(return_value=[]))
+    params = {'search': 'Python & Go #1', 'found_for_resume': '7', 'min_score': '60',
+              'only_scored': '1', 'only_unapplied': '1', 'order': 'recent'}
+    response = client.get('/vacancies', params=params)
+    href = re.search(r'href="([^"]+)" aria-label="Страница 2"', response.text).group(1)
+    query = parse_qs(urlparse(html.unescape(href)).query)
+    assert query == {**{key: [value] for key, value in params.items()}, 'page': ['2']}

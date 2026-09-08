@@ -1,0 +1,25 @@
+<form hx-post="/actions/pipeline-settings" hx-target="#pipeline-dialog-content" hx-swap="innerHTML"
+      hx-disabled-elt="find button[type='submit']">
+  <p class="muted">Выберите, что помощник должен делать после нажатия «Запустить».</p>
+  <div class="pipeline-choices">
+    <label class="pipeline-choice">
+      <input type="checkbox" name="schedule.do_collect" value="1" {{ 'checked' if do_collect }}>
+      <span><strong>Собрать вакансии</strong><small>Найти и сохранить вакансии по вашему запросу.</small></span>
+    </label>
+    <label class="pipeline-choice">
+      <input type="checkbox" name="schedule.do_score" value="1" {{ 'checked' if do_score }}>
+      <span><strong>Оценить соответствие резюме</strong><small>Включит оценку найденных вакансий нейросетью.</small></span>
+    </label>
+    <label class="pipeline-choice">
+      <input type="checkbox" name="schedule.do_apply" value="1" {{ 'checked' if do_apply }}>
+      <span><strong>Отправить отклики</strong><small>Включит автоматический режим: отклики на подходящие вакансии будут отправляться работодателям от вашего имени.</small></span>
+    </label>
+  </div>
+  {% if not llm_enabled %}<p class="small muted">Нейросеть пока выключена. Этап оценки можно выбрать заранее; для его работы понадобится настроить и включить нейросеть.</p>{% endif %}
+  <p class="small muted">Эти же этапы используются в расписании, если оно включено. Сохранение настроек не запускает задачи.</p>
+  <p class="error small" id="pipeline-save-error" role="alert" hidden></p>
+  <div class="dialog-actions">
+    <button type="button" data-close-pipeline>Отмена</button>
+    <button type="submit" class="primary">Сохранить</button>
+  </div>
+</form>

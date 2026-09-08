@@ -5,12 +5,14 @@ import functools
 import json
 import logging
 from typing import List, Optional
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 
 from src.db.models import TaskKind
 from src.web import jobs
+from src.web.panel import PIPELINE_STAGE_KEYS, hh_login_confirmed, panel_context
 from src.web.tasks import LANE_ACTIVITY, LANE_MAIN, LANE_PROFILE, TaskBusyError
 
 logger = logging.getLogger(__name__)
@@ -21,7 +23,7 @@ router = APIRouter(prefix="/actions")
 HEARTBEAT_SECONDS = 3
 
 
-def _panel(request: Request, error: str = "") -> HTMLResponse:
+async def _panel(request: Request, error: str = "") -> HTMLResponse:
     app = request.app
     return app.state.templates.TemplateResponse(
         request,
@@ -33,6 +35,7 @@ def _panel(request: Request, error: str = "") -> HTMLResponse:
             "scheduler": app.state.scheduler,
             "llm_health": app.state.llm_health.cached,
             "error": error,
+            **await panel_context(request),
         },
     )
 
@@ -53,14 +56,16 @@ RUNNABLE_JOBS = {
 
 
 async def _start(request: Request, kind: TaskKind, job, params=None, lane: str = LANE_MAIN) -> HTMLResponse:
+    if kind == TaskKind.ACTIVITY and not await hh_login_confirmed(request.app.state.repository):
+        return await _panel(request, error="Для фонового просмотра сначала войдите в hh.ru.")
     try:
         await request.app.state.tasks.start(kind, job, params=params or {}, lane=lane)
     except TaskBusyError as e:
-        return _panel(request, error=str(e))
+        return await _panel(request, error=str(e))
     except Exception as e:  # noqa: BLE001
         logger.exception("could not start task %s", kind.value)
-        return _panel(request, error=str(e))
-    return _panel(request)
+        return await _panel(request, error=str(e))
+    return await _panel(request)
 
 
 # --- jobs ---------------------------------------------------------------
@@ -70,10 +75,10 @@ async def start_selected(request: Request, kind: str = Form("collect")) -> HTMLR
     """Single entry point for the runner: pick a job, then press «Старт»."""
     entry = RUNNABLE_JOBS.get(kind)
     if not entry:
-        return _panel(request, error=f"неизвестная задача «{kind}»")
+        return await _panel(request, error=f"неизвестная задача «{kind}»")
 
     task_kind, job_name, lane = entry
-    return await _start(request, task_kind, getattr(jobs, job_name), lane=lane)
+    return await _start(request, task_kind, getattr(jobs, job_name), params={"action": kind}, lane=lane)
 
 
 @router.post("/collect", response_class=HTMLResponse)
@@ -88,18 +93,25 @@ async def start_score(request: Request) -> HTMLResponse:
 
 @router.post("/pipeline", response_class=HTMLResponse)
 async def start_pipeline(request: Request) -> HTMLResponse:
-    return await _start(request, TaskKind.COLLECT, jobs.pipeline_job)
+    return await _start(request, TaskKind.COLLECT, jobs.pipeline_job, params={"action": "pipeline"})
 
 
 @router.post("/apply", response_class=HTMLResponse)
 async def start_apply(
     request: Request,
     vacancy_ids: Optional[List[int]] = Form(None),
-) -> HTMLResponse:
+    return_to: str = Form(""),
+):
+    if return_to == "actions" and not vacancy_ids:
+        return RedirectResponse("/vacancies", status_code=303)
     job = functools.partial(jobs.apply_job, vacancy_ids=vacancy_ids) if vacancy_ids else jobs.apply_job
-    return await _start(
+    response = await _start(
         request, TaskKind.APPLY, job, params={"vacancy_ids": vacancy_ids or []}
     )
+    if return_to == "actions":
+        error = response.context.get("error", "")
+        return RedirectResponse("/actions" + ("?" + urlencode({"error": error}) if error else ""), status_code=303)
+    return response
 
 
 @router.post("/login", response_class=HTMLResponse)
@@ -115,13 +127,22 @@ async def start_activity(request: Request) -> HTMLResponse:
 @router.post("/stop", response_class=HTMLResponse)
 async def stop_task(request: Request, lane: str = Form(LANE_MAIN)) -> HTMLResponse:
     stopped = request.app.state.tasks.request_stop(lane)
-    return _panel(request, error="" if stopped else "нет выполняющейся задачи")
+    return await _panel(request, error="" if stopped else "нет выполняющейся задачи")
+
+
+@router.post("/dismiss", response_class=HTMLResponse)
+async def dismiss_task(request: Request, task_id: str = Form(...), lane: str = Form(LANE_MAIN)) -> HTMLResponse:
+    try:
+        request.app.state.tasks.dismiss(task_id, lane)
+    except TaskBusyError as error:
+        return await _panel(request, error=str(error))
+    return await _panel(request)
 
 
 @router.post("/confirm", response_class=HTMLResponse)
 async def confirm_task(request: Request, lane: str = Form(LANE_MAIN)) -> HTMLResponse:
     confirmed = request.app.state.tasks.confirm(lane)
-    return _panel(request, error="" if confirmed else "задача не ждёт подтверждения")
+    return await _panel(request, error="" if confirmed else "задача не ждёт подтверждения")
 
 
 # --- resume -------------------------------------------------------------
@@ -134,8 +155,39 @@ async def import_resume(request: Request, resume_url: str = Form(...)) -> Redire
             TaskKind.RESUME_IMPORT, job, params={"resume_url": resume_url.strip()}
         )
     except TaskBusyError as e:
-        return RedirectResponse(f"/resume?error={e}", status_code=303)
-    return RedirectResponse("/resume", status_code=303)
+        return RedirectResponse("/actions?" + urlencode({"error": str(e)}), status_code=303)
+    return RedirectResponse("/actions", status_code=303)
+
+
+async def _search_settings(request: Request, error: str = "") -> HTMLResponse:
+    return request.app.state.templates.TemplateResponse(
+        request, "partials/search_settings.html", {
+            **await panel_context(request), "tasks": request.app.state.tasks, "error": error,
+        },
+    )
+
+
+@router.get("/search-settings", response_class=HTMLResponse)
+async def search_settings(request: Request) -> HTMLResponse:
+    return await _search_settings(request)
+
+
+@router.post("/resume/{resume_id}/search-query", response_class=HTMLResponse)
+async def update_search_query(
+    request: Request, resume_id: int, search_query: str = Form(""),
+) -> HTMLResponse:
+    """Edit the active resume's query without changing its experience context."""
+    repository = request.app.state.repository
+    resume = await repository.get_active_resume()
+    if not resume or resume.id != resume_id:
+        return await _search_settings(request, error="Активное резюме изменилось. Повторите ввод запроса для выбранного резюме.")
+    if request.app.state.tasks.is_busy:
+        return await _search_settings(request, error="Дождитесь завершения текущей задачи, чтобы изменить запрос.")
+    await repository.update_resume_fields(resume.id, search_query.strip(), resume.context_text)
+    response = await _panel(request)
+    # The dashboard and the resume edit form display the same query.
+    response.headers["HX-Refresh"] = "true"
+    return response
 
 
 @router.post("/resume/{resume_id}/update")
@@ -180,8 +232,8 @@ async def rebuild_profile(
             TaskKind.PROFILE, job, params={"resume_id": resume_id}, lane=LANE_PROFILE
         )
     except TaskBusyError as e:
-        return RedirectResponse(f"/resume?error={e}", status_code=303)
-    return RedirectResponse("/resume", status_code=303)
+        return RedirectResponse("/actions?" + urlencode({"error": str(e)}), status_code=303)
+    return RedirectResponse("/actions", status_code=303)
 
 
 @router.post("/resume/{resume_id}/activate")
@@ -198,18 +250,106 @@ async def delete_resume(request: Request, resume_id: int) -> RedirectResponse:
 
 # --- settings -----------------------------------------------------------
 
+APPLY_SETTING_SECTIONS = (
+    ("Отбор и отправка", ("matching.threshold", "apply.batch_limit", "apply.delay_sec", "apply.recheck_with_llm")),
+    ("Сопроводительное письмо", ("cover_letter.enabled", "cover_letter.when", "cover_letter.model",
+                                "cover_letter.max_chars", "cover_letter.prompt", "cover_letter.fallback_text")),
+    ("Запуск в последовательности действий", ("apply.mode",)),
+)
+APPLY_SETTING_KEYS = {key for _, keys in APPLY_SETTING_SECTIONS for key in keys}
+
+
+async def _apply_settings(request: Request, errors=None, raw=None) -> HTMLResponse:
+    fields = {
+        field["key"]: dict(field)
+        for _, group in request.app.state.settings.grouped_fields()
+        for field in group["main"] + group["advanced"]
+    }
+    fields["matching.threshold"]["help"] = "Минимальная оценка от 0 до 100. Этот же порог используется в счётчиках подходящих вакансий."
+    fields["apply.batch_limit"]["help"] = "Лимит при автоматическом отборе по оценке. При отправке из списка вакансий обрабатывается весь ваш выбор."
+    fields["apply.mode"]["label"] = "Режим отправки"
+    fields["apply.mode"]["choice_labels"] = {"manual": "Только отдельным запуском", "auto": "Разрешить в последовательности действий"}
+    fields["apply.mode"]["help"] = "Во втором режиме отклики отправляются, если это действие включено в последовательность. Сохранение ничего не запускает."
+    fields["cover_letter.when"]["choice_labels"] = {"required": "Только когда требуется", "always": "Всегда"}
+    if raw is not None:
+        for key in APPLY_SETTING_KEYS:
+            fields[key]["value"] = (raw.get(key) == "1") if fields[key]["type"] == "bool" else raw.get(key, fields[key]["value"])
+    return request.app.state.templates.TemplateResponse(request, "partials/apply_settings.html", {
+        "sections": [(title, [fields[key] for key in keys]) for title, keys in APPLY_SETTING_SECTIONS],
+        "errors": errors or [],
+    })
+
+
+@router.get("/apply-settings", response_class=HTMLResponse)
+async def apply_settings(request: Request) -> HTMLResponse:
+    return await _apply_settings(request)
+
+
+@router.post("/apply-settings", response_class=HTMLResponse)
+async def save_apply_settings(request: Request) -> HTMLResponse:
+    raw = {key: str(value) for key, value in (await request.form()).multi_items()}
+    errors = await request.app.state.settings.save(raw, keys=APPLY_SETTING_KEYS)
+    if errors:
+        return await _apply_settings(request, errors=errors, raw=raw)
+    response = await _panel(request)
+    response.headers["HX-Retarget"] = "#task-panel"
+    response.headers["HX-Reswap"] = "outerHTML"
+    response.headers["HX-Trigger-After-Settle"] = "applySettingsSaved"
+    return response
+
+
+@router.get("/pipeline-settings", response_class=HTMLResponse)
+async def pipeline_settings(request: Request) -> HTMLResponse:
+    settings = request.app.state.settings
+    return request.app.state.templates.TemplateResponse(
+        request, "partials/pipeline_settings.html", {
+            "do_collect": settings.get("schedule.do_collect", True),
+            "do_score": settings.get("schedule.do_score", True) and settings.get("matching.enabled", True),
+            "do_apply": settings.get("schedule.do_apply", False) and settings.get("apply.mode", "manual") == "auto",
+            "llm_enabled": settings.get("llm.enabled", False),
+        },
+    )
+
+
+@router.post("/pipeline-settings", response_class=HTMLResponse)
+async def save_pipeline_settings(request: Request) -> HTMLResponse:
+    form = await request.form()
+    settings = request.app.state.settings
+    values = {key: "1" if form.get(key) == "1" else "" for key in PIPELINE_STAGE_KEYS}
+    keys = set(PIPELINE_STAGE_KEYS)
+    # The switches represent effective stages, including their existing gates.
+    if values["schedule.do_score"]:
+        values["matching.enabled"] = "1"
+        keys.add("matching.enabled")
+    if values["schedule.do_apply"]:
+        values["apply.mode"] = "auto"
+        keys.add("apply.mode")
+    await settings.save(values, keys=keys)
+    response = await _panel(request)
+    response.headers["HX-Retarget"] = "#task-panel"
+    response.headers["HX-Reswap"] = "outerHTML"
+    response.headers["HX-Trigger-After-Settle"] = json.dumps({"pipelineSettingsSaved": {
+        "matchingEnabled": settings.get("matching.enabled", False),
+        "applyMode": settings.get("apply.mode", "manual"),
+    }})
+    return response
+
+
 @router.post("/settings", response_class=HTMLResponse)
 async def save_settings(request: Request) -> HTMLResponse:
     form = await request.form()
     raw = {key: str(value) for key, value in form.multi_items()}
 
     settings = request.app.state.settings
-    errors = await settings.save(raw)
+    errors = await settings.save(raw, keys=set(settings.all_values()) - PIPELINE_STAGE_KEYS)
     if errors:
         return request.app.state.templates.TemplateResponse(
             request,
             "settings.html",
             {
+                **await panel_context(request),
+                "activity_task": request.app.state.tasks.activity,
+                "llm_health": request.app.state.llm_health.cached,
                 "groups": settings.grouped_fields(),
                 "errors": errors,
                 "saved": False,

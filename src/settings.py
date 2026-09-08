@@ -331,12 +331,15 @@ class SettingsService:
     def all_values(self) -> Dict[str, Any]:
         return dict(self._values)
 
-    async def save(self, raw_values: Dict[str, str]) -> List[str]:
+    async def save(self, raw_values: Dict[str, str], *, keys: Optional[set[str]] = None) -> List[str]:
         """Validate and persist a form submission. Returns human-readable errors."""
         errors: List[str] = []
         to_store: Dict[str, str] = {}
+        validated: Dict[str, Any] = {}
 
         for setting in FIELDS:
+            if keys is not None and setting.key not in keys:
+                continue
             if setting.type == "bool":
                 # An unchecked checkbox is simply absent from the form payload.
                 value: Any = setting.key in raw_values and raw_values[setting.key] not in ("", "0", "false")
@@ -353,13 +356,14 @@ class SettingsService:
                 # An empty secret field means "keep the stored key".
                 continue
 
-            self._values[setting.key] = value
+            validated[setting.key] = value
             to_store[setting.key] = _serialize(value)
 
         if errors:
             return errors
 
         await self.repository.save_settings(to_store)
+        self._values.update(validated)
         logger.info("settings saved: %s", ", ".join(sorted(to_store)))
         return []
 
