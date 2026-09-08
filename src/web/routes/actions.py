@@ -7,11 +7,12 @@ import logging
 from typing import List, Optional
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Form, Request
+from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 
 from src.db.models import TaskKind
 from src.web import jobs
+from src.web.action_settings import ACTION_KEYS, ACTION_SECTIONS, SHARED_KEYS, action_sections, shared_groups
 from src.web.panel import PIPELINE_STAGE_KEYS, hh_login_confirmed, panel_context
 from src.web.tasks import LANE_ACTIVITY, LANE_MAIN, LANE_PROFILE, TaskBusyError
 
@@ -115,8 +116,9 @@ async def start_apply(
 
 
 @router.post("/login", response_class=HTMLResponse)
-async def start_login(request: Request) -> HTMLResponse:
-    return await _start(request, TaskKind.LOGIN, jobs.login_job)
+async def start_login(request: Request, switch_account: bool = Form(False)) -> HTMLResponse:
+    return await _start(request, TaskKind.LOGIN, jobs.login_job,
+                        params={"switch_account": switch_account})
 
 
 @router.post("/activity", response_class=HTMLResponse)
@@ -159,10 +161,12 @@ async def import_resume(request: Request, resume_url: str = Form(...)) -> Redire
     return RedirectResponse("/actions", status_code=303)
 
 
-async def _search_settings(request: Request, error: str = "") -> HTMLResponse:
+async def _search_settings(request: Request, error: str = "", raw=None, errors=None) -> HTMLResponse:
     return request.app.state.templates.TemplateResponse(
         request, "partials/search_settings.html", {
             **await panel_context(request), "tasks": request.app.state.tasks, "error": error,
+            "sections": action_sections(request.app.state.settings, "search", raw),
+            "errors": errors or [], "raw": raw,
         },
     )
 
@@ -170,6 +174,27 @@ async def _search_settings(request: Request, error: str = "") -> HTMLResponse:
 @router.get("/search-settings", response_class=HTMLResponse)
 async def search_settings(request: Request) -> HTMLResponse:
     return await _search_settings(request)
+
+
+@router.post("/search-settings", response_class=HTMLResponse)
+async def save_search_settings(request: Request) -> HTMLResponse:
+    raw = {key: str(value) for key, value in (await request.form()).multi_items()}
+    repository = request.app.state.repository
+    resume = await repository.get_active_resume()
+    query = raw.get("search_query", "").strip()
+    errors = []
+    if "resume_id" in raw:
+        if not resume or str(resume.id) != raw["resume_id"]:
+            errors.append("Активное резюме изменилось. Откройте настройки заново.")
+        elif query != resume.search_query and request.app.state.tasks.is_busy:
+            errors.append("Дождитесь завершения текущей задачи, чтобы изменить запрос.")
+    if not errors:
+        errors = await request.app.state.settings.save(raw, keys=ACTION_KEYS["search"])
+    if errors:
+        return await _search_settings(request, raw=raw, errors=errors)
+    if "resume_id" in raw and resume and query != resume.search_query:
+        await repository.update_resume_fields(resume.id, query, resume.context_text)
+    return await _settings_saved(request, "search")
 
 
 @router.post("/resume/{resume_id}/search-query", response_class=HTMLResponse)
@@ -250,32 +275,13 @@ async def delete_resume(request: Request, resume_id: int) -> RedirectResponse:
 
 # --- settings -----------------------------------------------------------
 
-APPLY_SETTING_SECTIONS = (
-    ("Отбор и отправка", ("matching.threshold", "apply.batch_limit", "apply.delay_sec", "apply.recheck_with_llm")),
-    ("Сопроводительное письмо", ("cover_letter.enabled", "cover_letter.when", "cover_letter.model",
-                                "cover_letter.max_chars", "cover_letter.prompt", "cover_letter.fallback_text")),
-    ("Запуск в последовательности действий", ("apply.mode",)),
-)
-APPLY_SETTING_KEYS = {key for _, keys in APPLY_SETTING_SECTIONS for key in keys}
+APPLY_SETTING_SECTIONS = ACTION_SECTIONS["apply"]
+APPLY_SETTING_KEYS = ACTION_KEYS["apply"]
 
 
 async def _apply_settings(request: Request, errors=None, raw=None) -> HTMLResponse:
-    fields = {
-        field["key"]: dict(field)
-        for _, group in request.app.state.settings.grouped_fields()
-        for field in group["main"] + group["advanced"]
-    }
-    fields["matching.threshold"]["help"] = "Минимальная оценка от 0 до 100. Этот же порог используется в счётчиках подходящих вакансий."
-    fields["apply.batch_limit"]["help"] = "Лимит при автоматическом отборе по оценке. При отправке из списка вакансий обрабатывается весь ваш выбор."
-    fields["apply.mode"]["label"] = "Режим отправки"
-    fields["apply.mode"]["choice_labels"] = {"manual": "Только отдельным запуском", "auto": "Разрешить в последовательности действий"}
-    fields["apply.mode"]["help"] = "Во втором режиме отклики отправляются, если это действие включено в последовательность. Сохранение ничего не запускает."
-    fields["cover_letter.when"]["choice_labels"] = {"required": "Только когда требуется", "always": "Всегда"}
-    if raw is not None:
-        for key in APPLY_SETTING_KEYS:
-            fields[key]["value"] = (raw.get(key) == "1") if fields[key]["type"] == "bool" else raw.get(key, fields[key]["value"])
     return request.app.state.templates.TemplateResponse(request, "partials/apply_settings.html", {
-        "sections": [(title, [fields[key] for key in keys]) for title, keys in APPLY_SETTING_SECTIONS],
+        "sections": action_sections(request.app.state.settings, "apply", raw),
         "errors": errors or [],
     })
 
@@ -291,22 +297,31 @@ async def save_apply_settings(request: Request) -> HTMLResponse:
     errors = await request.app.state.settings.save(raw, keys=APPLY_SETTING_KEYS)
     if errors:
         return await _apply_settings(request, errors=errors, raw=raw)
+    return await _settings_saved(request, "apply")
+
+
+async def _settings_saved(request: Request, kind: str) -> HTMLResponse:
     response = await _panel(request)
     response.headers["HX-Retarget"] = "#task-panel"
     response.headers["HX-Reswap"] = "outerHTML"
-    response.headers["HX-Trigger-After-Settle"] = "applySettingsSaved"
+    response.headers["HX-Trigger-After-Settle"] = f"{kind}SettingsSaved"
     return response
 
 
 @router.get("/pipeline-settings", response_class=HTMLResponse)
 async def pipeline_settings(request: Request) -> HTMLResponse:
+    return await _pipeline_settings(request)
+
+
+async def _pipeline_settings(request: Request, raw=None, errors=None) -> HTMLResponse:
     settings = request.app.state.settings
     return request.app.state.templates.TemplateResponse(
         request, "partials/pipeline_settings.html", {
-            "do_collect": settings.get("schedule.do_collect", True),
-            "do_score": settings.get("schedule.do_score", True) and settings.get("matching.enabled", True),
-            "do_apply": settings.get("schedule.do_apply", False) and settings.get("apply.mode", "manual") == "auto",
+            "do_collect": raw.get("schedule.do_collect") == "1" if raw is not None else settings.get("schedule.do_collect", True),
+            "do_score": raw.get("schedule.do_score") == "1" if raw is not None else settings.get("schedule.do_score", True) and settings.get("matching.enabled", True),
+            "do_apply": raw.get("schedule.do_apply") == "1" if raw is not None else settings.get("schedule.do_apply", False) and settings.get("apply.mode", "manual") == "auto",
             "llm_enabled": settings.get("llm.enabled", False),
+            "sections": action_sections(settings, "pipeline", raw), "errors": errors or [],
         },
     )
 
@@ -315,8 +330,9 @@ async def pipeline_settings(request: Request) -> HTMLResponse:
 async def save_pipeline_settings(request: Request) -> HTMLResponse:
     form = await request.form()
     settings = request.app.state.settings
-    values = {key: "1" if form.get(key) == "1" else "" for key in PIPELINE_STAGE_KEYS}
-    keys = set(PIPELINE_STAGE_KEYS)
+    values = {key: str(value) for key, value in form.multi_items()}
+    values.update({key: "1" if form.get(key) == "1" else "" for key in PIPELINE_STAGE_KEYS})
+    keys = set(PIPELINE_STAGE_KEYS) | ACTION_KEYS["pipeline"]
     # The switches represent effective stages, including their existing gates.
     if values["schedule.do_score"]:
         values["matching.enabled"] = "1"
@@ -324,7 +340,10 @@ async def save_pipeline_settings(request: Request) -> HTMLResponse:
     if values["schedule.do_apply"]:
         values["apply.mode"] = "auto"
         keys.add("apply.mode")
-    await settings.save(values, keys=keys)
+    errors = await settings.save(values, keys=keys)
+    if errors:
+        return await _pipeline_settings(request, raw=values, errors=errors)
+    request.app.state.scheduler.reschedule()
     response = await _panel(request)
     response.headers["HX-Retarget"] = "#task-panel"
     response.headers["HX-Reswap"] = "outerHTML"
@@ -335,13 +354,39 @@ async def save_pipeline_settings(request: Request) -> HTMLResponse:
     return response
 
 
+@router.get("/{kind}-settings", response_class=HTMLResponse)
+async def action_settings(request: Request, kind: str) -> HTMLResponse:
+    return await _action_settings(request, kind)
+
+
+async def _action_settings(request: Request, kind: str, raw=None, errors=None) -> HTMLResponse:
+    if kind not in {"score", "profile", "activity", "resume_touch"}:
+        raise HTTPException(status_code=404)
+    return request.app.state.templates.TemplateResponse(request, "partials/action_settings.html", {
+        "kind": kind, "sections": action_sections(request.app.state.settings, kind, raw), "errors": errors or [],
+    })
+
+
+@router.post("/{kind}-settings", response_class=HTMLResponse)
+async def save_action_settings(request: Request, kind: str) -> HTMLResponse:
+    if kind not in {"score", "profile", "activity", "resume_touch"}:
+        raise HTTPException(status_code=404)
+    raw = {key: str(value) for key, value in (await request.form()).multi_items()}
+    errors = await request.app.state.settings.save(raw, keys=ACTION_KEYS[kind])
+    if errors:
+        return await _action_settings(request, kind, raw=raw, errors=errors)
+    if kind in {"activity", "resume_touch"}:
+        request.app.state.scheduler.reschedule()
+    return await _settings_saved(request, kind)
+
+
 @router.post("/settings", response_class=HTMLResponse)
 async def save_settings(request: Request) -> HTMLResponse:
     form = await request.form()
     raw = {key: str(value) for key, value in form.multi_items()}
 
     settings = request.app.state.settings
-    errors = await settings.save(raw, keys=set(settings.all_values()) - PIPELINE_STAGE_KEYS)
+    errors = await settings.save(raw, keys=SHARED_KEYS)
     if errors:
         return request.app.state.templates.TemplateResponse(
             request,
@@ -350,7 +395,7 @@ async def save_settings(request: Request) -> HTMLResponse:
                 **await panel_context(request),
                 "activity_task": request.app.state.tasks.activity,
                 "llm_health": request.app.state.llm_health.cached,
-                "groups": settings.grouped_fields(),
+                "groups": shared_groups(settings),
                 "errors": errors,
                 "saved": False,
                 "tasks": request.app.state.tasks,

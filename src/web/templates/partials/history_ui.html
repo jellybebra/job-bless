@@ -1,0 +1,27 @@
+{% macro icon(name) -%}
+<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+  {% if name == 'send' %}<path d="m22 2-7 20-4-9-9-4 20-7Z M22 2 11 13"/>
+  {% elif name == 'clock' %}<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>
+  {% else %}<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6Z M14 2v6h6 M8 13h8 M8 17h5"/>{% endif %}
+</svg>
+{%- endmacro %}
+
+{% macro empty_state(title, description, href, label, symbol) -%}
+<div class="page-empty">
+  <div class="empty-icon">{{ icon(symbol) }}</div>
+  <h2>{{ title }}</h2><p class="muted">{{ description }}</p>
+  <a class="btn" href="{{ href }}">{{ label }}</a>
+</div>
+{%- endmacro %}
+
+{% macro run_result(result) -%}
+{% set labels = {'collect': 'Сбор вакансий', 'score': 'Оценка', 'apply': 'Отклики', 'unique': 'Вакансий собрано', 'pages': 'Страниц', 'scored': 'Оценено', 'failed': 'Ошибок', 'above_threshold': 'Выше порога', 'total': 'Всего', 'applied': 'Отправлено', 'skipped': 'Пропущено', 'already_applied': 'Уже откликались', 'resume_id': 'Номер резюме', 'title': 'Название', 'skills': 'Навыков', 'chars': 'Символов', 'source_chars': 'Символов в исходнике', 'chunks': 'Частей', 'model': 'Модель', 'logged_in': 'Вход подтверждён', 'account_name': 'Аккаунт hh.ru', 'storage_state': 'Сохранённая сессия', 'updated': 'Резюме обновлено', 'method': 'Способ обновления', 'before': 'До обновления', 'after': 'После обновления', 'error': 'Ошибка', 'duration_sec': 'Длительность, с', 'elapsed_sec': 'Прошло, с', 'search_pages': 'Страниц поиска', 'vacancies_opened': 'Вакансий открыто', 'scrolls': 'Прокруток', 'minutes': 'Длительность, мин', 'stopped_early': 'Остановлен досрочно'} %}
+<dl class="run-result">
+{% for key, value in result.items() %}
+  <div class="{{ 'result-group' if value is mapping }}">
+    <dt>{{ labels.get(key, key) }}</dt>
+    <dd>{% if value is mapping %}{{ run_result(value) }}{% elif value is sameas true %}Да{% elif value is sameas false %}Нет{% elif value is none %}—{% elif value is sequence and value is not string %}{{ value | join(', ') }}{% else %}{{ value }}{% endif %}</dd>
+  </div>
+{% endfor %}
+</dl>
+{%- endmacro %}

@@ -29,7 +29,8 @@ function setup() {
       htmx: { ajax: () => { refreshes++; } },
     },
     document: {
-      getElementById: () => null,
+      getElementById: id => id === "task-panel" ? {} : null,
+      querySelector: () => null,
       addEventListener() {},
       body: { addEventListener() {} },
     },

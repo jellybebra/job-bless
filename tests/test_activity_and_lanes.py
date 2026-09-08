@@ -64,6 +64,31 @@ async def _start_in_lane(manager, kind, job, lane):
     return await manager.start(kind, job, lane=lane)
 
 
+@pytest.mark.parametrize("first,first_lane,second,second_lane", [
+    (TaskKind.LOGIN, LANE_MAIN, TaskKind.ACTIVITY, LANE_ACTIVITY),
+    (TaskKind.ACTIVITY, LANE_ACTIVITY, TaskKind.LOGIN, LANE_MAIN),
+])
+def test_login_and_activity_never_share_a_changing_account(client, first, first_lane, second, second_lane):
+    manager = client.app.state.tasks
+
+    async def job(ctx):
+        while not ctx.should_stop():
+            await asyncio.sleep(.01)
+        return {}
+
+    async def scenario():
+        await manager.start(first, job, lane=first_lane)
+        try:
+            # Scheduler calls start directly, so HTTP-only guards are not enough.
+            with pytest.raises(TaskBusyError):
+                await manager.start(second, job, lane=second_lane, trigger="schedule")
+        finally:
+            manager.request_stop(first_lane)
+            await manager.lane(first_lane).task
+
+    client.portal.call(scenario)
+
+
 def test_second_job_in_the_same_lane_is_rejected(client):
     manager = client.app.state.tasks
 
@@ -253,15 +278,15 @@ def test_activity_settings_have_their_own_group(client):
     assert "Имитация активности" in groups
     assert "Обновление резюме" in groups
 
-    page = client.get("/settings").text
-    assert "Имитация активности" in page
+    page = client.get("/actions/activity-settings").text
+    assert "Фоновый просмотр" in page
     assert 'name="activity.duration_min"' in page
 
 
 def test_activity_config_falls_back_to_the_resume_query(client):
     settings = client.app.state.settings
     client.post(
-        "/actions/settings",
+        "/actions/activity-settings",
         data={"activity.url": "", "activity.duration_min": "3"},
         follow_redirects=False,
     )
@@ -273,7 +298,7 @@ def test_activity_config_falls_back_to_the_resume_query(client):
 def test_activity_pause_range_cannot_be_inverted(client):
     settings = client.app.state.settings
     client.post(
-        "/actions/settings",
+        "/actions/activity-settings",
         data={"activity.pause_min_sec": "9", "activity.pause_max_sec": "2"},
         follow_redirects=False,
     )
@@ -282,11 +307,13 @@ def test_activity_pause_range_cannot_be_inverted(client):
 
 
 def test_max_pages_accepts_four_digits(client):
-    client.post("/actions/settings", data={"scroller.max_pages": "9999"}, follow_redirects=False)
+    client.post("/actions/search-settings", data={"scroller.max_pages": "9999"}, follow_redirects=False)
     assert client.app.state.settings.scroller_config().max_pages == 9999
 
-    rejected = client.post("/actions/settings", data={"scroller.max_pages": "10000"})
-    assert rejected.status_code == 400
+    rejected = client.post("/actions/search-settings", data={"scroller.max_pages": "10000"})
+    assert 'максимум' in rejected.text
+    assert 'HX-Trigger-After-Settle' not in rejected.headers
+    assert client.app.state.settings.scroller_config().max_pages == 9999
 
 
 # --- scheduler -----------------------------------------------------------
@@ -298,7 +325,7 @@ def test_scheduler_has_three_independent_cycles(client):
 
 def test_activity_schedule_is_independent_of_the_pipeline(client):
     client.post(
-        "/actions/settings",
+        "/actions/activity-settings",
         data={
             "schedule.enabled": "",               # pipeline off
             "schedule.activity_enabled": "1",     # activity on
@@ -455,7 +482,7 @@ def test_inverted_step_range_is_tolerated():
 
 def test_scroll_pace_settings_reach_the_config(client):
     client.post(
-        "/actions/settings",
+        "/actions/search-settings",
         data={
             "scroller.scroll_step_min": "900",
             "scroller.scroll_step_max": "1500",
@@ -572,10 +599,10 @@ async def test_wait_respects_the_timeout_if_the_list_never_settles():
 def test_instant_is_the_default_load_mode(client):
     assert client.app.state.settings.scroller_config().load_mode == "instant"
 
-    page = client.get("/settings").text
+    page = client.get("/actions/search-settings").text
     assert 'name="scroller.load_mode"' in page
 
-    client.post("/actions/settings", data={"scroller.load_mode": "scroll"}, follow_redirects=False)
+    client.post("/actions/search-settings", data={"scroller.load_mode": "scroll"}, follow_redirects=False)
     assert client.app.state.settings.scroller_config().load_mode == "scroll"
 
 

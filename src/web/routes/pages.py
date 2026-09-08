@@ -9,6 +9,7 @@ from fastapi import APIRouter, Query, Request
 from fastapi.responses import HTMLResponse
 
 from src.web.panel import panel_context
+from src.web.action_settings import shared_groups
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +135,8 @@ async def applications(
 ) -> HTMLResponse:
     repository = request.app.state.repository
     total = await repository.count_applications(status)
+    pages = max(1, math.ceil(total / PAGE_SIZE))
+    page = min(page, pages)
     rows = await repository.list_applications(
         status=status, limit=PAGE_SIZE, offset=(page - 1) * PAGE_SIZE
     )
@@ -145,7 +148,7 @@ async def applications(
         rows=rows,
         total=total,
         page=page,
-        pages=max(1, math.ceil(total / PAGE_SIZE)),
+        pages=pages,
         status=status,
         by_status=stats["by_status"],
     )
@@ -169,7 +172,7 @@ async def resume_page(request: Request) -> HTMLResponse:
 @router.get("/settings", response_class=HTMLResponse)
 async def settings_page(request: Request, saved: bool = Query(False)) -> HTMLResponse:
     settings = request.app.state.settings
-    return await _render(request, "settings.html", groups=settings.grouped_fields(), saved=saved, errors=[])
+    return await _render(request, "settings.html", groups=shared_groups(settings), saved=saved, errors=[])
 
 
 @router.get("/runs", response_class=HTMLResponse)

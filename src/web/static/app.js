@@ -1,10 +1,88 @@
 // Live task updates over SSE: append log lines, refresh the task panel.
 (function () {
+  const settingsForm = document.querySelector('.settings-form');
+  if (settingsForm) {
+    const saveBar = settingsForm.querySelector('.settings-save-bar');
+    function fieldValues() {
+      return new Map(Array.from(settingsForm.elements)
+        .filter(field => field.name)
+        .map(field => [field.name, field.type === 'checkbox' ? field.checked : field.value]));
+    }
+    const initialValues = fieldValues();
+    let currentValues = new Map(initialValues);
+    function warnBeforeLeaving(event) {
+      event.preventDefault();
+      event.returnValue = '';
+    }
+    function restoreField(field, value) {
+      if (field.type === 'checkbox') {
+        field.checked = value;
+      } else {
+        if (field.tagName === 'SELECT' && !Array.from(field.options).some(option => option.value === value)) {
+          field.add(new Option(value || '—', value));
+        }
+        field.value = value;
+      }
+    }
+    function updateSaveBar() {
+      currentValues = fieldValues();
+      const changed = Array.from(initialValues).some(([name, value]) => currentValues.get(name) !== value);
+      saveBar.classList.toggle('is-visible', changed);
+      saveBar.inert = !changed;
+      saveBar.setAttribute('aria-hidden', String(!changed));
+      if (changed) window.addEventListener('beforeunload', warnBeforeLeaving);
+      else window.removeEventListener('beforeunload', warnBeforeLeaving);
+    }
+    updateSaveBar();
+    saveBar.hidden = false;
+    settingsForm.addEventListener('input', updateSaveBar);
+    settingsForm.addEventListener('change', updateSaveBar);
+    settingsForm.addEventListener('reset', () => requestAnimationFrame(updateSaveBar));
+    settingsForm.querySelector('[data-discard-settings]').addEventListener('click', () => {
+      Array.from(settingsForm.elements).forEach(field => {
+        if (initialValues.has(field.name)) restoreField(field, initialValues.get(field.name));
+      });
+      // Move focus out of the bar before it becomes inert and slides away.
+      (settingsForm.querySelector('.settings-section[open] > summary') || settingsForm.querySelector('summary'))?.focus({ preventScroll: true });
+      updateSaveBar();
+    });
+    // A valid save is intentional navigation; invalid forms keep the guard.
+    settingsForm.addEventListener('submit', () => window.removeEventListener('beforeunload', warnBeforeLeaving));
+    window.addEventListener('pageshow', updateSaveBar);
+    settingsForm.addEventListener('htmx:afterSwap', () => {
+      // Loading or refreshing the model list must preserve the user's value,
+      // including edits made while the request was in flight.
+      settingsForm.querySelectorAll('.model-field [name]').forEach(field => {
+        if (!currentValues.has(field.name)) return;
+        restoreField(field, currentValues.get(field.name));
+      });
+      updateSaveBar();
+    });
+    function revealSetting(element) {
+      for (let parent = element?.parentElement; parent && parent !== settingsForm; parent = parent.parentElement) {
+        if (parent.tagName === 'DETAILS') parent.open = true;
+      }
+    }
+    function revealSettingsHash() {
+      let id;
+      try { id = decodeURIComponent(location.hash.slice(1)); } catch { return; }
+      const target = document.getElementById(id);
+      if (!target || !settingsForm.contains(target)) return;
+      revealSetting(target);
+      requestAnimationFrame(() => target.scrollIntoView({ block: 'center' }));
+    }
+    // Closed sections still submit their controls. Reveal invalid fields so
+    // the browser can focus them and explain what needs correcting.
+    settingsForm.addEventListener('invalid', event => revealSetting(event.target), true);
+    window.addEventListener('hashchange', revealSettingsHash);
+    revealSettingsHash();
+  }
   const log = document.getElementById("log");
   const MAX_LINES = 400;
   let source = null;
   let reconnectTimer = null;
   let reloadTimer = null;
+  let refreshAfterDialog = false;
   let pageActive = true;
 
   function disconnect() {
@@ -158,7 +236,10 @@
         if (data.type === "finished") {
           // Numbers on the current page are stale once a job finishes.
           clearTimeout(reloadTimer);
-          reloadTimer = setTimeout(function () { window.location.reload(); }, 1200);
+          reloadTimer = setTimeout(function () {
+            if (document.querySelector('.pipeline-dialog[open]')) refreshAfterDialog = true;
+            else window.location.reload();
+          }, 1200);
         }
       }
     };
@@ -188,13 +269,39 @@
   connect();
 
   // Dialogs live outside the task panel so live updates preserve edits.
-  const pipelineDialog = document.getElementById("pipeline-dialog");
-  ["pipeline", "search", "apply"].forEach(function (kind) {
+  ["pipeline", "search", "apply", "score", "profile", "activity", "resume_touch"].forEach(function (kind) {
     const dialog = document.getElementById(kind + "-dialog");
     if (!dialog) return;
     const opener = "[data-open-" + kind + "]";
+    dialog.addEventListener('invalid', function (event) {
+      for (let parent = event.target.parentElement; parent && parent !== dialog; parent = parent.parentElement) {
+        if (parent.tagName === 'DETAILS') parent.open = true;
+      }
+    }, true);
+    const pendingModels = new Map();
+    dialog.addEventListener('htmx:beforeSwap', function (event) {
+      const target = event.detail.target;
+      if (!target?.matches('.model-field')) return;
+      const field = target.querySelector('[name]');
+      if (field) pendingModels.set(field.name, field.value);
+    });
+    dialog.addEventListener('htmx:afterSwap', function () {
+      dialog.querySelectorAll('.model-field [name]').forEach(field => {
+        if (!pendingModels.has(field.name)) return;
+        const value = pendingModels.get(field.name);
+        if (field.tagName === 'SELECT' && !Array.from(field.options).some(option => option.value === value)) {
+          field.add(new Option(value || '—', value));
+        }
+        field.value = value;
+        pendingModels.delete(field.name);
+      });
+    });
+    document.body.addEventListener(kind + "SettingsSaved", function () {
+      dialog.close();
+    });
     document.addEventListener("click", function (event) {
       if (event.target.closest(opener)) {
+        pendingModels.clear();
         document.getElementById(kind + "-dialog-content").innerHTML = '<p class="muted" role="status">Загружаем настройки…</p>';
         if (!dialog.open) dialog.showModal();
       }
@@ -225,19 +332,6 @@
     }
     document.body.addEventListener("htmx:responseError", requestError);
     document.body.addEventListener("htmx:sendError", requestError);
-  });
-  document.body.addEventListener("pipelineSettingsSaved", function (event) {
-    // Keep any settings form on this page in sync with the modal's changes.
-    const matching = document.querySelector('.settings-form [name="matching.enabled"]');
-    const applyMode = document.querySelector('.settings-form [name="apply.mode"]');
-    if (matching) matching.checked = event.detail.matchingEnabled;
-    if (applyMode) applyMode.value = event.detail.applyMode;
-    pipelineDialog?.close();
-    document.querySelector("[data-open-pipeline]")?.focus({ preventScroll: true });
-  });
-  document.body.addEventListener("applySettingsSaved", function () {
-    document.getElementById("apply-dialog")?.close();
-    document.querySelector("[data-open-apply]")?.focus({ preventScroll: true });
   });
   // Selection belongs to the current page; empty selection never starts a batch.
   const checkAll = document.getElementById("check-all");

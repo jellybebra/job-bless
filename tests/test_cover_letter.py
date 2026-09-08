@@ -261,7 +261,7 @@ def client(tmp_path):
 
 
 def test_cover_letter_settings_are_exposed(client):
-    page = client.get("/settings").text
+    page = client.get("/actions/apply-settings").text
     assert "Сопроводительное письмо" in page
     assert 'name="cover_letter.when"' in page
     assert 'name="cover_letter.prompt"' in page
@@ -269,7 +269,7 @@ def test_cover_letter_settings_are_exposed(client):
 
 def test_cover_letter_settings_round_trip(client):
     client.post(
-        "/actions/settings",
+        "/actions/apply-settings",
         data={
             "cover_letter.enabled": "1",
             "cover_letter.when": "always",
@@ -285,7 +285,7 @@ def test_cover_letter_settings_round_trip(client):
 
 
 def test_disabled_cover_letter_yields_no_writer(client):
-    client.post("/actions/settings", data={"cover_letter.enabled": ""}, follow_redirects=False)
+    client.post("/actions/apply-settings", data={"cover_letter.enabled": ""}, follow_redirects=False)
     config = client.app.state.settings.cover_letter_config()
     assert config.enabled is False
     assert build_writer(FakeLLM("text"), config, RESUME) is None

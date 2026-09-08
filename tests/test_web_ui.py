@@ -29,10 +29,105 @@ def test_pages_render(client):
         assert "job-bless" in response.text
 
 
+def test_applications_pagination_keeps_filter_and_clamps_page(client):
+    from src.db.models import ApplicationStatus, VacancyApplication
+
+    async def seed():
+        for i in range(26):
+            await client.app.state.repository.record_application(VacancyApplication(
+                external_id=f"pagination-{i}", vacancy_url=f"https://hh.ru/vacancy/{i}",
+                status=ApplicationStatus.FAILED,
+            ))
+        await client.app.state.repository.record_application(VacancyApplication(
+            external_id="sent-example", vacancy_url="https://hh.ru/vacancy/sent",
+            status=ApplicationStatus.APPLIED,
+        ))
+
+    client.portal.call(seed)
+    first = client.get("/applications?status=failed").text
+    assert first.count('<article class="history-item"') == 25
+    assert '?page=2&amp;status=failed' in first
+    last = client.get("/applications?status=failed&page=999").text
+    assert last.count('<article class="history-item"') == 1
+    assert 'aria-current="page">2</span>' in last
+    assert "sent-example" not in last
+
+
+def test_runs_preserve_nested_results_and_escape_text(client):
+    from src.db.models import TaskRun, TaskStatus
+
+    repository = client.app.state.repository
+    client.portal.call(repository.create_task_run, TaskRun(
+        id="nested-run", kind=TaskKind.COLLECT, params={"action": "pipeline"},
+    ))
+    client.portal.call(repository.finish_task_run, "nested-run", TaskStatus.COMPLETED,
+                       {"collect": {"unique": 42}, "logged_in": False,
+                        "future_field": "<script>alert(1)</script>"})
+    response = client.get("/runs")
+    assert response.status_code == 200
+    assert "Полный цикл" in response.text
+    assert "Вакансий собрано" in response.text
+    assert "42" in response.text
+    assert "Нет" in response.text
+    assert "future_field" in response.text
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in response.text
+
+
 def test_task_panel_partial(client):
     response = client.get("/partials/status")
     assert response.status_code == 200
     assert 'id="task-panel"' in response.text
+
+
+@pytest.mark.parametrize("name", ["", "Анна Петрова", "<script>alert(1)</script>"])
+def test_confirmed_account_persists_in_panel_without_resume(client, name):
+    from html import escape
+    from src.db.models import TaskRun, TaskStatus
+
+    repository = client.app.state.repository
+    client.portal.call(repository.create_task_run, TaskRun(id="account-login", kind=TaskKind.LOGIN))
+    result = {"logged_in": True, "account_name": name} if name else {"logged_in": True}
+    client.portal.call(repository.finish_task_run, "account-login", TaskStatus.COMPLETED, result)
+    for path in ("/actions", "/partials/status"):
+        panel = client.get(path).text
+        assert "Вы вошли в hh.ru" in panel
+        assert ">Сменить аккаунт</button>" in panel
+        assert '"switch_account": "1"' in panel
+        assert escape(name) in panel
+        assert "<script>alert(1)</script>" not in panel
+
+
+def test_unconfirmed_new_login_hides_previous_account(client):
+    from src.db.models import TaskRun, TaskStatus
+
+    repository = client.app.state.repository
+    client.portal.call(repository.create_task_run, TaskRun(id="old-account", kind=TaskKind.LOGIN))
+    client.portal.call(repository.finish_task_run, "old-account", TaskStatus.COMPLETED,
+                       {"logged_in": True, "account_name": "Предыдущий Аккаунт"})
+    client.portal.call(repository.create_task_run, TaskRun(id="cancelled-login", kind=TaskKind.LOGIN))
+    client.portal.call(repository.finish_task_run, "cancelled-login", TaskStatus.CANCELLED)
+    panel = client.get("/partials/status").text
+    assert "Предыдущий Аккаунт" not in panel
+    assert "Вы вошли в hh.ru" not in panel
+    assert ">Войти в hh.ru</button>" in panel
+
+
+def test_switch_account_endpoint_passes_explicit_intent(client, monkeypatch):
+    from src.web import jobs
+
+    async def login(ctx):
+        return {"logged_in": True, "account_name": "Другой Аккаунт"}
+
+    monkeypatch.setattr(jobs, "login_job", login)
+    client.post("/actions/login", data={"switch_account": "1"})
+    manager = client.app.state.tasks
+    assert manager.current.params["switch_account"] is True
+
+    async def wait_finished():
+        await manager.lane().task
+
+    client.portal.call(wait_finished)
+    assert "Другой Аккаунт" in client.get("/partials/status").text
 
 
 def test_settings_roundtrip(client):
@@ -40,9 +135,8 @@ def test_settings_roundtrip(client):
         "/actions/settings",
         data={
             "matching.threshold": "85",
-            "apply.mode": "auto",
-            "schedule.enabled": "1",
-            "schedule.interval_minutes": "60",
+            "ratelimit.enabled": "1",
+            "ratelimit.requests_per_minute": "60",
         },
         follow_redirects=False,
     )
@@ -51,10 +145,11 @@ def test_settings_roundtrip(client):
 
     settings = client.app.state.settings
     assert settings.get("matching.threshold") == 85
-    assert settings.get("apply.mode") == "auto"
+    assert settings.get("ratelimit.requests_per_minute") == 60
     # Checkboxes absent from the payload must become False, not stay True.
     assert settings.get("schedule.do_apply") is False
-    assert settings.get("schedule.enabled") is True
+    assert settings.get("ratelimit.enabled") is True
+    assert settings.get("llm.enabled") is False
 
     # Values survive a reload from the database (fresh process would do the same).
     from anyio.from_thread import start_blocking_portal
@@ -62,7 +157,7 @@ def test_settings_roundtrip(client):
     with start_blocking_portal() as portal:
         portal.call(settings.load)
     assert settings.get("matching.threshold") == 85
-    assert settings.get("apply.mode") == "auto"
+    assert settings.get("ratelimit.requests_per_minute") == 60
     assert "85" in client.get("/settings").text
 
 
@@ -80,13 +175,13 @@ def test_settings_feed_typed_configs(client):
             "browser.headless": "1",
             "llm.standard": "anthropic",
             "llm.model": "gemini-2.5-flash-lite",
-            "scroller.max_pages": "7",
         },
         follow_redirects=False,
     )
     settings = client.app.state.settings
     assert settings.browser_config().headless is True
     assert settings.llm_config().standard == "anthropic"
+    client.post("/actions/search-settings", data={"scroller.max_pages": "7"})
     assert settings.scroller_config().max_pages == 7
 
 
@@ -277,7 +372,7 @@ def test_compact_lamp_shows_only_model(client):
     assert "есть подключение" in full and "проверить" in full
 
 
-def test_panel_has_llm_settings_button_and_dashboard_keeps_health_status(client):
+def test_panel_has_action_settings_buttons_and_dashboard_keeps_health_status(client):
     from src.llm.health import LLMHealth
 
     monitor = client.app.state.llm_health
@@ -285,7 +380,8 @@ def test_panel_has_llm_settings_button_and_dashboard_keeps_health_status(client)
     monitor._checked_monotonic = float("inf")
 
     panel = client.get("/partials/status").text
-    assert 'aria-label="Настроить нейросеть"' in panel
+    assert 'aria-label="Настроить оценку вакансий"' in panel
+    assert 'aria-label="Настроить описание опыта"' in panel
     assert "search-model" not in panel
     assert "llm-status" not in panel
 
@@ -350,19 +446,19 @@ def test_model_field_falls_back_to_text_input(client):
 
 
 def test_scroll_settings_are_behind_a_spoiler(client):
-    page = client.get("/settings").text
+    page = client.get("/actions/search-settings").text
     assert "<details" in page and "Тонкая настройка" in page
 
-    # Everyday fields stay visible, the scroll knobs move inside the spoiler.
-    before_details = page.split('class="settings-form"', 1)[1].split("<details", 1)[0]
-    assert 'name="scroller.load_mode"' in before_details
-    assert 'name="scroller.max_pages"' not in before_details
+    # Everyday fields sit inside the section, scroll knobs in its nested spoiler.
+    before_advanced = page.split('<details class="advanced">', 1)[0]
+    assert 'name="scroller.load_mode"' in before_advanced
+    assert 'name="scroller.max_pages"' not in before_advanced
     assert 'name="scroller.max_pages"' in page
 
 
 def test_advanced_fields_still_save(client):
     client.post(
-        "/actions/settings",
+        "/actions/search-settings",
         data={"scroller.max_pages": "7", "scroller.stable_cycles": "5"},
         follow_redirects=False,
     )
@@ -371,10 +467,14 @@ def test_advanced_fields_still_save(client):
     assert settings.scroller_config().stable_cycles == 5
 
 
-def test_spoiler_opens_when_a_value_differs_from_default(client):
-    client.post("/actions/settings", data={"scroller.max_pages": "9"}, follow_redirects=False)
+def test_settings_stay_collapsed_when_a_value_differs_from_default(client):
+    import re
+
+    client.post("/actions/settings", data={"ratelimit.requests_per_minute": "90"}, follow_redirects=False)
     page = client.get("/settings").text
-    assert "<details class=\"advanced\" open" in page
+    details = re.findall(r'<details\b[^>]*>', page)
+    assert details and all(' open' not in tag for tag in details)
+    assert 'name="ratelimit.requests_per_minute" value="90"' in page
 
 
 def _stage_button(panel, kind):
@@ -393,7 +493,7 @@ def test_new_user_sees_disabled_actions_with_resume_setup(client):
     assert panel.count('class="resume-banner"') == 1
     assert panel.count('data-action-id=') == 8
     assert "Начните с вашего резюме" not in panel
-    assert 'aria-label="Настроить нейросеть"' in panel
+    assert 'aria-label="Настроить оценку вакансий"' in panel
     assert "Собрать вакансии" in panel
     assert "Оценить соответствие вакансий резюме" in panel
     for kind in ("collect", "score", "apply"):
@@ -413,8 +513,8 @@ def test_settings_page_requests_model_dropdown(client):
     """Every model-typed setting asks for its own dropdown."""
     page = client.get("/settings").text
     assert 'hx-get="/actions/llm-models?field=llm.model"' in page
-    assert 'hx-get="/actions/llm-models?field=profile.model"' in page
-    assert 'hx-get="/actions/llm-models?field=cover_letter.model"' in page
+    assert 'hx-get="/actions/llm-models?field=profile.model"' in client.get('/actions/profile-settings').text
+    assert 'hx-get="/actions/llm-models?field=cover_letter.model"' in client.get('/actions/apply-settings').text
 
 
 def test_static_assets_are_versioned_and_revalidated(client):
@@ -438,7 +538,7 @@ def test_resume_unlocks_actions_and_explains_missing_setup(client):
 
     panel = client.get("/partials/status").text
     assert "Укажите должность в окне «Настроить поиск»." in panel
-    assert "Настроить нейросеть для оценки" in panel
+    assert "Настроить оценку вакансий" in panel
     assert "disabled" in _stage_button(panel, "collect")
     assert "disabled" in _stage_button(panel, "score")
     assert "disabled" not in _stage_button(panel, "apply")
@@ -469,11 +569,13 @@ def test_panel_query_edit_preserves_resume_context(client):
 
     modal = client.get("/actions/search-settings").text
     assert 'value="Python"' in modal
-    assert f'hx-post="/actions/resume/{resume_id}/search-query"' in modal
+    assert 'hx-post="/actions/search-settings"' in modal
+    assert f'name="resume_id" value="{resume_id}"' in modal
 
-    response = client.post(f"/actions/resume/{resume_id}/search-query", data={"search_query": "  Backend Python  "})
+    response = client.post("/actions/search-settings", data={"resume_id": str(resume_id), "search_query": "  Backend Python  ", "scroller.max_pages": "7"})
     assert response.status_code == 200
-    assert response.headers["HX-Refresh"] == "true"
+    assert response.headers["HX-Trigger-After-Settle"] == "searchSettingsSaved"
+    assert client.app.state.settings.scroller_config().max_pages == 7
     assert "Ищем: «Backend Python»" in response.text
     assert "disabled" not in _stage_button(response.text, "collect")
     with start_blocking_portal() as portal:
@@ -640,19 +742,21 @@ def test_pipeline_modal_saves_only_its_settings(client):
     before = settings.all_values()
     response = client.post('/actions/pipeline-settings', data={
         'schedule.do_collect': '1', 'schedule.do_score': '1', 'schedule.do_apply': '1',
-        'llm.enabled': '1', 'schedule.enabled': '1',  # unrelated input is ignored
+        'schedule.enabled': '1', 'schedule.interval_minutes': '60',
+        'llm.enabled': '1',  # unrelated input is ignored
     })
     assert response.status_code == 200
     assert response.headers['HX-Retarget'] == '#task-panel'
     assert 'pipelineSettingsSaved' in response.headers['HX-Trigger-After-Settle']
-    changed_keys = {'schedule.do_collect', 'schedule.do_score', 'schedule.do_apply', 'matching.enabled', 'apply.mode'}
+    changed_keys = {'schedule.do_collect', 'schedule.do_score', 'schedule.do_apply', 'matching.enabled', 'apply.mode', 'schedule.enabled', 'schedule.interval_minutes'}
     for key, value in before.items():
         if key not in changed_keys:
             assert settings.get(key) == value, key
     assert settings.get('matching.enabled') is True
     assert settings.get('apply.mode') == 'auto'
     assert not client.app.state.tasks.is_busy
-    assert client.get('/actions/pipeline-settings').text.count(' checked') == 3
+    assert client.get('/actions/pipeline-settings').text.count(' checked') == 4
+    assert client.app.state.scheduler.entries[0].next_run_at is not None
 
     # The full settings form no longer owns the stage flags.
     client.post('/actions/settings', data={'matching.threshold': '85'})
@@ -788,7 +892,7 @@ def test_running_card_switches_play_to_stop_in_its_lane(client, action, lane, ki
         if action == 'pipeline':
             assert 'is-stop' not in card(panel, 'collect')
         if lane != 'main':
-            assert 'disabled' not in _stage_button(card(panel, 'login'), 'login')
+            assert ('disabled' in _stage_button(card(panel, 'login'), 'login')) == (lane == 'activity')
         client.post('/actions/stop', data={'lane': lane})
         portal.call(wait_finished)
     stopped = card(client.get('/partials/status').text, action)

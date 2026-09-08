@@ -12,7 +12,7 @@
       {% endif %}
     </select>
   {% else %}
-    <input type="text" name="model" value="{{ profile_model }}" placeholder="модель для профиля">
+    <input type="text" name="model" value="{{ profile_model }}" placeholder="модель для профиля" aria-label="Модель для сборки профиля">
   {% endif %}
   <button type="submit" class="{{ 'primary' if primary }}">{{ button }}</button>
 </form>
