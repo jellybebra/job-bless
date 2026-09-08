@@ -1,33 +1,36 @@
 {% extends "base.html" %}
+{% from "partials/history_ui.html" import empty_state, run_result %}
 {% block title %}Прогоны — job-bless{% endblock %}
-
 {% block content %}
-<section class="block">
-  <h2>История прогонов</h2>
-  <table class="wide">
-    <thead>
-      <tr><th>Задача</th><th>Запуск</th><th>Статус</th><th>Начало</th><th>Конец</th><th>Результат</th></tr>
-    </thead>
-    <tbody>
+{% set kinds = {'collect': 'Сбор вакансий', 'score': 'Оценка соответствия', 'apply': 'Отправка откликов', 'pipeline': 'Полный цикл', 'resume_import': 'Импорт резюме', 'resume_touch': 'Обновление резюме', 'profile': 'Сборка профиля', 'activity': 'Имитация активности', 'login': 'Вход в hh.ru'} %}
+{% set statuses = {'running': 'Выполняется', 'completed': 'Завершён', 'failed': 'Ошибка', 'cancelled': 'Остановлен'} %}
+<section class="history-page">
+  <header class="page-heading">
+    <div><h1>Прогоны</h1><p class="muted">История задач: что запускалось и чем закончилось.</p></div>
+    <a class="btn" href="/actions">Перейти к действиям</a>
+  </header>
+  {% if runs %}
+  <div class="history-context"><span>Последние прогоны <strong>{{ runs | length }}</strong></span><span>Сначала новые · до 50 записей</span></div>
+  <div class="history-list">
     {% for run in runs %}
-      <tr>
-        <td>{{ run.kind }}</td>
-        <td>{{ 'по расписанию' if run.trigger == 'schedule' else 'вручную' }}</td>
-        <td><span class="badge {{ run.status }}">{{ run.status }}</span></td>
-        <td class="nowrap">{{ run.started_at | short_dt }}</td>
-        <td class="nowrap">{{ run.finished_at | short_dt }}</td>
-        <td class="small">
-          {% if run.error_message %}
-            <span class="error-text">{{ run.error_message }}</span>
-          {% else %}
-            <span class="muted">{{ run.result }}</span>
-          {% endif %}
-        </td>
-      </tr>
-    {% else %}
-      <tr><td colspan="6" class="muted">Прогонов ещё не было</td></tr>
+    <article class="history-item" aria-labelledby="run-title-{{ run.id }}">
+      <div class="history-info">
+        <p class="history-meta">{{ 'По расписанию' if run.trigger == 'schedule' else 'Вручную' }} <span>·</span> <time>{{ run.started_at | short_dt }}</time></p>
+        <h2 id="run-title-{{ run.id }}">{{ 'Полный цикл' if run.params.get('action') == 'pipeline' or 'collect' in run.result else kinds.get(run.kind, run.kind) }}</h2>
+        {% if run.error_message %}<p class="history-message is-error">{{ run.error_message }}</p>{% endif %}
+        {% if run.result %}{{ run_result(run.result) }}
+        {% elif not run.error_message %}<p class="muted history-note">{{ 'Результат появится после завершения задачи.' if run.status == 'running' else 'Задача остановлена до получения результата.' if run.status == 'cancelled' else 'Подробности результата не сохранены.' }}</p>{% endif %}
+      </div>
+      <div class="history-status">
+        <span class="badge {{ run.status }}">{{ statuses.get(run.status, run.status) }}</span>
+        {% if run.finished_at %}<span class="muted small">Завершение<br><time>{{ run.finished_at | short_dt }}</time></span>
+        {% elif run.status == 'running' %}<a class="small" href="/actions">Открыть текущую задачу</a>{% endif %}
+      </div>
+    </article>
     {% endfor %}
-    </tbody>
-  </table>
+  </div>
+  {% else %}
+    {{ empty_state('Прогонов ещё не было', 'Запустите сбор вакансий, оценку или другое действие. Здесь появятся результат, время запуска и возможные ошибки.', '/actions', 'Перейти к действиям', 'clock') }}
+  {% endif %}
 </section>
 {% endblock %}

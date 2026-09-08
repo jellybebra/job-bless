@@ -237,6 +237,14 @@ class TaskManager:
         trigger: str = "manual",
         lane: str = LANE_MAIN,
     ) -> TaskState:
+        # Login changes cookies shared by every browser lane. This also covers
+        # scheduled activity, which bypasses the HTTP action guards.
+        activity = self.lane(LANE_ACTIVITY).current
+        if kind == TaskKind.LOGIN and activity and activity.status == TaskStatus.RUNNING:
+            raise TaskBusyError("Сначала остановите фоновый просмотр hh.ru, затем смените аккаунт или войдите.")
+        main = self.current
+        if kind == TaskKind.ACTIVITY and main and main.kind == TaskKind.LOGIN and main.status == TaskStatus.RUNNING:
+            raise TaskBusyError("Дождитесь завершения входа в hh.ru.")
         target = self.lane(lane)
         if target.is_busy:
             running = target.current.kind.value if target.current else "задача"

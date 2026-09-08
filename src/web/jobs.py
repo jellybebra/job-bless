@@ -13,7 +13,8 @@ from playwright.async_api import async_playwright
 from src.activity.service import ActivityScroller
 from src.applier.auto_applier import HHAutoApplier
 from src.applier.cover_letter import build_writer
-from src.browser.connector import BrowserConnector
+from src.browser.account import HH_COOKIE_DOMAIN, LOGIN_SELECTORS, is_hh_url, read_hh_account
+from src.browser.connector import LIVE_PAGES, BrowserConnector
 from src.browser.local_process import LocalProcessLauncher
 from src.collector.collector import HHVacancyCardCollector
 from src.config import BrowserConfig
@@ -372,7 +373,7 @@ async def resume_import_job(ctx: TaskContext, resume_url: str) -> Dict[str, Any]
 
 
 async def login_job(ctx: TaskContext) -> Dict[str, Any]:
-    """Open hh.ru login page in a real Chrome window and wait for the user."""
+    """Confirm the actual hh.ru account and persist it with the login run."""
     browser_config = await ensure_browser(ctx)
     if browser_config.headless:
         raise ValueError("Для входа нужен видимый браузер — выключите headless в настройках")
@@ -383,44 +384,77 @@ async def login_job(ctx: TaskContext) -> Dict[str, Any]:
         )
         contexts = browser.contexts
         context = contexts[0] if contexts else await browser.new_context()
-        page = await context.new_page()
-        await page.goto("https://hh.ru/account/login", wait_until="domcontentloaded")
-
-        ctx.log("окно Chrome открыто на странице входа hh.ru")
-        ctx.log("войдите в аккаунт и нажмите кнопку «Я вошёл» в интерфейсе")
-
-        confirmed = await ctx.wait_for_confirmation(timeout_sec=900)
-        if not confirmed:
-            raise TimeoutError("вход не подтверждён за 15 минут")
-
+        # Chrome's launch arguments already open hh.ru. Reuse that tab (or an
+        # existing hh.ru tab) instead of adding a second copy on every login.
+        pages = [page for page in context.pages if not page.is_closed() and page not in LIVE_PAGES]
+        page = next((page for page in reversed(pages) if is_hh_url(page.url)), None)
+        if page is None:
+            page = next((page for page in pages if page.url in ("about:blank", "chrome://newtab/")), None)
+        created_page = page is None
+        if created_page:
+            page = await context.new_page()
         storage_path = Path(STORAGE_STATE_PATH).resolve()
         storage_path.parent.mkdir(parents=True, exist_ok=True)
-        await context.storage_state(path=str(storage_path))
-        logged_in = await _looks_logged_in(page)
         try:
-            await page.close()
-        except Exception:  # noqa: BLE001
-            pass
+            ctx.raise_if_stopped()
+            if ctx.state.params.get("switch_account"):
+                await context.clear_cookies(domain=HH_COOKIE_DOMAIN)
+                # Do not leave the previous account in the session backup if
+                # the user cancels before signing into the replacement.
+                await context.storage_state(path=str(storage_path))
+                ctx.log("сессия hh.ru сброшена — войдите в другой аккаунт")
+                account = {"logged_in": False, "account_name": ""}
+            else:
+                # On a fresh launch the reused tab may still be loading. The
+                # authenticated state is in its HTML, so no menu click is needed.
+                await page.wait_for_load_state("domcontentloaded", timeout=15000)
+                account = await read_hh_account(page)
+            if not account["logged_in"]:
+                await page.goto("https://hh.ru/account/login", wait_until="domcontentloaded")
+                ctx.log("войдите в аккаунт в Chrome — вход определится автоматически")
+                ctx.log("если статус не обновился, нажмите «Я вошёл» в интерфейсе")
+                account = await _wait_for_hh_login(ctx, page)
+            ctx.raise_if_stopped()
+            await context.storage_state(path=str(storage_path))
+        except (Exception, asyncio.CancelledError):
+            # Leave reused tabs alone, including when verification fails. A
+            # successful login tab stays open for the user and the next check.
+            if created_page:
+                try:
+                    await page.close()
+                except Exception:  # noqa: BLE001
+                    pass
+            raise
 
-    ctx.log(f"сессия сохранена в {storage_path}")
-    if not logged_in:
-        ctx.log("предупреждение: не удалось подтвердить вход на странице — проверьте вручную")
-    return {"storage_state": str(storage_path), "logged_in": logged_in}
+    ctx.log("вход в hh.ru подтверждён" + (f": {account['account_name']}" if account["account_name"] else ""))
+    return {"storage_state": str(storage_path), **account}
 
 
-async def _looks_logged_in(page) -> bool:
+async def _wait_for_hh_login(ctx: TaskContext, page) -> Dict[str, Any]:
+    """Watch the login tab without interrupting typing or SMS verification."""
+    confirmation = asyncio.create_task(ctx.wait_for_confirmation(timeout_sec=900))
     try:
+        while not confirmation.done():
+            ctx.raise_if_stopped()
+            account = await read_hh_account(page)
+            if account["logged_in"]:
+                return account
+            await asyncio.wait({confirmation}, timeout=2)
+        if not await confirmation:
+            raise TimeoutError("вход не подтверждён за 15 минут")
+        # Manual confirmation is a request to check, not proof of login.
         await page.goto("https://hh.ru/", wait_until="domcontentloaded", timeout=15000)
-        for selector in (
-            '[data-qa="mainmenu_applicantProfile"]',
-            '[data-qa="mainmenu_myResumes"]',
-            '[data-qa="mainmenu_negotiations"]',
-        ):
-            if await page.query_selector(selector):
-                return True
-    except Exception:  # noqa: BLE001
-        return False
-    return False
+        try:
+            await page.locator(", ".join(LOGIN_SELECTORS)).first.wait_for(state="visible", timeout=5000)
+        except Exception:
+            pass
+        account = await read_hh_account(page)
+        if not account["logged_in"]:
+            raise ValueError("Вход в hh.ru не подтверждён. Завершите вход в Chrome и попробуйте снова.")
+        return account
+    finally:
+        confirmation.cancel()
+        await asyncio.gather(confirmation, return_exceptions=True)
 
 
 async def activity_job(ctx: TaskContext) -> Dict[str, Any]:

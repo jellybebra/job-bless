@@ -1,0 +1,32 @@
+{% from 'partials/settings_field.html' import render_field %}
+{% macro render_sections(sections) %}
+  {% for title, fields in sections %}
+    <fieldset>
+      <legend>{{ title }}</legend>
+      {% for field in fields if not field.advanced %}{{ render_field(field) }}{% endfor %}
+      {% set advanced = fields | selectattr('advanced') | list %}
+      {% if advanced %}
+        <details class="advanced">
+          <summary>Тонкая настройка ({{ advanced | length }})</summary>
+          {% for field in advanced %}{{ render_field(field) }}{% endfor %}
+        </details>
+      {% endif %}
+    </fieldset>
+  {% endfor %}
+{% endmacro %}
+
+{% if kind is defined %}
+<form class="action-settings-form" method="post" action="/actions/{{ kind }}-settings" hx-post="/actions/{{ kind }}-settings" hx-target="#{{ kind }}-dialog-content"
+      hx-swap="innerHTML" hx-disabled-elt="find button[type='submit']" hx-disinherit="hx-disabled-elt">
+  <p class="muted">Сохранение настроек не запускает действие.</p>
+  {% if kind in ('score', 'profile') %}<p class="small"><a href="/settings#f-llm.enabled">Общие настройки подключения к нейросети</a></p>{% endif %}
+  <div class="error-box" id="{{ kind }}-save-error" role="alert" {{ 'hidden' if not errors }}>
+    {% for error in errors %}<p>{{ error }}</p>{% endfor %}
+  </div>
+  {{ render_sections(sections) }}
+  <div class="dialog-actions">
+    <button type="button" data-close-{{ kind }}>Отмена</button>
+    <button type="submit" class="primary">Сохранить</button>
+  </div>
+</form>
+{% endif %}

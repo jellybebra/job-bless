@@ -1,0 +1,9 @@
+{% for kind, title in [('score', 'Настроить оценку вакансий'), ('profile', 'Настроить описание опыта'), ('activity', 'Настроить фоновый просмотр'), ('resume_touch', 'Настроить поднятие резюме')] %}
+<dialog class="pipeline-dialog apply-dialog" id="{{ kind }}-dialog" aria-labelledby="{{ kind }}-dialog-title">
+  <div class="dialog-heading">
+    <h2 id="{{ kind }}-dialog-title">{{ title }}</h2>
+    <button type="button" class="ghost" data-close-{{ kind }} aria-label="Закрыть окно">{% include 'partials/close_icon.html' %}</button>
+  </div>
+  <div id="{{ kind }}-dialog-content"></div>
+</dialog>
+{% endfor %}

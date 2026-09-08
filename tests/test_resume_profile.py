@@ -231,13 +231,13 @@ def test_query_and_context_are_saved_from_the_card(client):
 def test_search_query_is_no_longer_a_global_setting(client):
     settings_page = client.get("/settings").text
     assert 'name="search.query"' not in settings_page
-    assert "Профиль кандидата" in settings_page
-    assert 'name="profile.model"' in settings_page
+    assert 'name="profile.model"' not in settings_page
+    assert 'name="profile.model"' in client.get('/actions/profile-settings').text
 
 
 def test_profile_settings_round_trip(client):
     client.post(
-        "/actions/settings",
+        "/actions/profile-settings",
         data={"profile.model": "heavy-model", "profile.max_chars": "5000",
               "profile.prompt": "Собери профиль сухо."},
         follow_redirects=False,

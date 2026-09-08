@@ -1,5 +1,6 @@
-<form hx-post="/actions/pipeline-settings" hx-target="#pipeline-dialog-content" hx-swap="innerHTML"
-      hx-disabled-elt="find button[type='submit']">
+{% from 'partials/action_settings.html' import render_sections %}
+<form class="action-settings-form" method="post" action="/actions/pipeline-settings" hx-post="/actions/pipeline-settings" hx-target="#pipeline-dialog-content" hx-swap="innerHTML"
+      hx-disabled-elt="find button[type='submit']" hx-disinherit="hx-disabled-elt">
   <p class="muted">Выберите, что помощник должен делать после нажатия «Запустить».</p>
   <div class="pipeline-choices">
     <label class="pipeline-choice">
@@ -17,7 +18,10 @@
   </div>
   {% if not llm_enabled %}<p class="small muted">Нейросеть пока выключена. Этап оценки можно выбрать заранее; для его работы понадобится настроить и включить нейросеть.</p>{% endif %}
   <p class="small muted">Эти же этапы используются в расписании, если оно включено. Сохранение настроек не запускает задачи.</p>
-  <p class="error small" id="pipeline-save-error" role="alert" hidden></p>
+  <div class="error-box" id="pipeline-save-error" role="alert" {{ 'hidden' if not errors }}>
+    {% for error in errors %}<p>{{ error }}</p>{% endfor %}
+  </div>
+  {{ render_sections(sections) }}
   <div class="dialog-actions">
     <button type="button" data-close-pipeline>Отмена</button>
     <button type="submit" class="primary">Сохранить</button>
