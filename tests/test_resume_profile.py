@@ -278,4 +278,5 @@ def test_profile_runs_in_its_own_lane(client):
 
     assert LANE_PROFILE in client.app.state.tasks.lanes
     panel = client.get("/partials/status").text
-    assert 'value="profile"' in panel
+    assert 'data-action-id="profile"' in panel
+    assert 'hx-vals=\'{"kind":"profile"}\'' in panel

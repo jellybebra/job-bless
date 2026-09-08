@@ -7,6 +7,8 @@ from typing import Optional
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import HTMLResponse
 
+from src.web.panel import panel_context
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
@@ -14,8 +16,10 @@ router = APIRouter()
 PAGE_SIZE = 25
 
 
-def _render(request: Request, template: str, **context) -> HTMLResponse:
+async def _render(request: Request, template: str, **context) -> HTMLResponse:
     app = request.app
+    if template in ("actions.html", "partials/task_panel.html"):
+        context.update(await panel_context(request))
     context.setdefault("tasks", app.state.tasks)
     context.setdefault("current_task", app.state.tasks.current)
     context.setdefault("activity_task", app.state.tasks.activity)
@@ -43,7 +47,7 @@ async def dashboard(request: Request) -> HTMLResponse:
             resume_id=resume.id, min_score=threshold, only_unapplied=True, only_scored=True
         )
 
-    return _render(
+    return await _render(
         request,
         "dashboard.html",
         stats=stats,
@@ -56,6 +60,11 @@ async def dashboard(request: Request) -> HTMLResponse:
         search_query=resume.search_query if resume else "",
         search_url=settings.search_url_for(resume.search_query) if resume else settings.search_url,
     )
+
+
+@router.get("/actions", response_class=HTMLResponse)
+async def actions_page(request: Request, error: str = Query("")) -> HTMLResponse:
+    return await _render(request, "actions.html", error=error)
 
 
 @router.get("/vacancies", response_class=HTMLResponse)
@@ -87,7 +96,7 @@ async def vacancies(
         **filters, order=order, limit=PAGE_SIZE, offset=(page - 1) * PAGE_SIZE
     )
 
-    return _render(
+    return await _render(
         request,
         "vacancies.html",
         rows=rows,
@@ -119,7 +128,7 @@ async def applications(
     )
     stats = await repository.get_dashboard_stats(None)
 
-    return _render(
+    return await _render(
         request,
         "applications.html",
         rows=rows,
@@ -136,7 +145,7 @@ async def resume_page(request: Request) -> HTMLResponse:
     repository = request.app.state.repository
     settings = request.app.state.settings
     resumes = await repository.list_resumes()
-    return _render(
+    return await _render(
         request,
         "resume.html",
         resumes=resumes,
@@ -149,15 +158,15 @@ async def resume_page(request: Request) -> HTMLResponse:
 @router.get("/settings", response_class=HTMLResponse)
 async def settings_page(request: Request, saved: bool = Query(False)) -> HTMLResponse:
     settings = request.app.state.settings
-    return _render(request, "settings.html", groups=settings.grouped_fields(), saved=saved, errors=[])
+    return await _render(request, "settings.html", groups=settings.grouped_fields(), saved=saved, errors=[])
 
 
 @router.get("/runs", response_class=HTMLResponse)
 async def runs_page(request: Request) -> HTMLResponse:
     runs = await request.app.state.repository.list_task_runs(limit=50)
-    return _render(request, "runs.html", runs=runs)
+    return await _render(request, "runs.html", runs=runs)
 
 
 @router.get("/partials/status", response_class=HTMLResponse)
 async def status_partial(request: Request) -> HTMLResponse:
-    return _render(request, "partials/task_panel.html")
+    return await _render(request, "partials/task_panel.html")

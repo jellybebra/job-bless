@@ -767,10 +767,16 @@ class DatabaseRepository:
             ),
         )
 
-    async def list_task_runs(self, limit: int = 20) -> List[Dict[str, Any]]:
-        rows = await self._fetch_all(
-            "SELECT * FROM task_runs ORDER BY started_at DESC LIMIT ?;", (limit,)
-        )
+    async def list_task_runs(self, limit: int = 20, kind: Optional[TaskKind] = None) -> List[Dict[str, Any]]:
+        if kind is None:
+            rows = await self._fetch_all(
+                "SELECT * FROM task_runs ORDER BY started_at DESC LIMIT ?;", (limit,)
+            )
+        else:
+            rows = await self._fetch_all(
+                "SELECT * FROM task_runs WHERE kind = ? ORDER BY started_at DESC LIMIT ?;",
+                (kind.value, limit),
+            )
         for row in rows:
             row["params"] = _load_json_dict(row.pop("params_json", None))
             row["result"] = _load_json_dict(row.pop("result_json", None))

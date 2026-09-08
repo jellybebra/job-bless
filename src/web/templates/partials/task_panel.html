@@ -1,70 +1,119 @@
-<div class="panel" id="task-panel" hx-target="#task-panel" hx-swap="outerHTML">
-  <form class="runner" hx-post="/actions/start">
-    <div class="runner-options" id="runner-options">
-      {% set options = [
-        ('collect',  'Собрать вакансии', 'Пройти по страницам поиска и сохранить карточки'),
-        ('score',    'Оценить соответствие', 'Сравнить собранные вакансии с активным резюме'),
-        ('apply',    'Откликнуться по порогу', 'Отклик на всё выше порога соответствия'),
-        ('pipeline', 'Полный цикл', 'Сбор → оценка → отклики (по настройкам)'),
-        ('resume_touch', 'Обновить резюме', 'Поднять резюме в поиске hh.ru'),
-        ('profile', 'Собрать профиль', 'Пересобрать профиль кандидата из резюме и контекста'),
-        ('login',    'Войти в hh.ru', 'Открыть окно Chrome для входа в аккаунт')
-      ] %}
-      {% for value, label, hint in options %}
-        <label class="runner-option" title="{{ hint }}">
-          <input type="radio" name="kind" value="{{ value }}" {{ 'checked' if loop.first }}>
-          <span>{{ label }}</span>
-        </label>
-      {% endfor %}
+{% macro icon(name) -%}
+<svg viewBox="0 0 24 24" width="20" height="20" fill="none" aria-hidden="true">
+  {% if name == 'play' %}<path d="M8 5.5 18 12 8 18.5Z" fill="currentColor" stroke="currentColor" stroke-linejoin="round"/>
+  {% elif name == 'stop' %}<rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/>
+  {% elif name == 'lock' %}<path d="M8 10V7a4 4 0 0 1 8 0v3M6 10h12v10H6z" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+  {% elif name == 'settings' %}<path d="m10 3-.6 2.3-2 .9-2.2-.6-2 3.4 1.6 1.7v2.6L3.2 15l2 3.4 2.2-.6 2 .9L10 21h4l.6-2.3 2-.9 2.2.6 2-3.4-1.6-1.7v-2.6L20.8 9l-2-3.4-2.2.6-2-.9L14 3z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.5"/>
+  {% elif name == 'resume' %}<path d="M7 3h7l4 4v14H6V3zM14 3v5h4M9 12h6M9 16h4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>{% endif %}
+</svg>
+{%- endmacro %}
+
+{% macro action_card(kind, title, description, lane='main', needs_resume=true, needs_llm=false, config='', start_label='') -%}
+  {% set slot = tasks.lane(lane) %}
+  {% set busy = slot.is_busy %}
+  {% set active_kind = slot.current.params.get('action', slot.current.kind.value) if slot.current else '' %}
+  {% set running = busy and active_kind == kind %}
+  {% set missing_resume = needs_resume and not panel_resume %}
+  {% set missing_llm = needs_llm and not panel_llm_enabled %}
+  {% set missing_login = kind == 'activity' and not panel_hh_logged_in %}
+  {% set missing_query = kind == 'collect' and panel_resume and not panel_resume.search_query.strip() %}
+  {% set missing_steps = kind == 'pipeline' and not panel_pipeline_stages %}
+  {% set blocked = not running and (busy or missing_resume or missing_llm or missing_login or missing_query or missing_steps) %}
+  <article class="action-card{{ ' is-running' if running }}{{ ' is-blocked' if blocked }}" data-action-id="{{ kind }}">
+    <div class="action-card-heading">
+      <h3>{{ title }}</h3>
+      {% if running %}<span class="running-dot" title="Выполняется"></span>{% elif blocked %}<span class="card-lock">{{ icon('lock') }}</span>{% endif %}
     </div>
-
-    <div class="runner-controls">
-      <button type="submit" class="primary" {{ 'disabled' if tasks.is_busy }}>Старт</button>
-      <button type="button" class="danger" hx-post="/actions/stop"
-              {{ '' if tasks.is_busy else 'disabled' }}>
-        {{ 'Остановить принудительно' if tasks.stop_requested and tasks.is_busy else 'Стоп' }}
-      </button>
-      <span class="llm-slot">
-        {% with compact = true, initial = true %}{% include "partials/llm_status.html" %}{% endwith %}
-      </span>
+    <p class="action-description">{{ description }}</p>
+    <p class="action-hint" id="{{ kind }}-context">
+      {% if running %}<span class="running-label">{{ 'Останавливается…' if slot.stop_requested else 'Выполняется' }}</span>
+      {% elif missing_resume %}Нужно резюме{% if missing_llm %} и нейросеть{% endif %}
+      {% elif missing_llm %}<a href="/settings#f-llm.enabled">Настройте нейросеть</a>
+      {% elif missing_login %}<button class="link" type="button" id="activity-login-required" hx-post="/actions/login" {{ 'disabled' if tasks.is_busy }}>Нужен вход в hh.ru</button>
+      {% elif missing_query %}Укажите должность в окне «Настроить поиск».
+      {% elif missing_steps %}Выберите действия для запуска
+      {% elif busy %}Дождитесь завершения текущего действия
+      {% elif kind == 'collect' %}Ищем: «{{ panel_resume.search_query }}»
+      {% elif kind == 'apply' %}До {{ panel_apply_limit }} откликов · оценка от {{ panel_threshold }}
+      {% elif lane != 'main' %}Может работать параллельно
+      {% endif %}
+    </p>
+    <div class="action-card-footer">
+      <div class="card-settings-slot">
+      {% if config == 'search' %}
+        <button type="button" class="card-settings" data-open-search hx-get="/actions/search-settings" hx-target="#search-dialog-content" hx-swap="innerHTML" aria-label="Настроить поиск" title="Настроить поиск" {{ 'disabled' if not panel_resume }}>{{ icon('settings') }}</button>
+      {% elif config == 'llm' %}
+        <a class="card-settings{{ ' needs-setup' if missing_llm }}" href="/settings#f-llm.enabled" aria-label="Настроить нейросеть" title="Настроить нейросеть для оценки">{{ icon('settings') }}</a>
+      {% elif config == 'apply' %}
+        <button type="button" class="card-settings" data-open-apply hx-get="/actions/apply-settings" hx-target="#apply-dialog-content" hx-swap="innerHTML" aria-label="Настроить отклики" title="Настроить отклики">{{ icon('settings') }}</button>
+      {% elif config == 'pipeline' %}
+        <button type="button" class="card-settings" data-open-pipeline hx-get="/actions/pipeline-settings" hx-target="#pipeline-dialog-content" hx-swap="innerHTML" aria-label="Настроить действия" title="Настроить действия">{{ icon('settings') }}</button>
+      {% endif %}
+      </div>
+      {% if running %}
+        <button type="button" class="action-control is-stop" hx-post="/actions/stop" hx-vals='{{ {"lane": lane} | tojson }}' aria-label="Остановить: {{ title }}" title="{{ 'Остановить принудительно' if slot.stop_requested else 'Остановить' }}">{{ icon('stop') }}</button>
+      {% else %}
+        <button type="button" class="action-control" hx-post="/actions/{{ 'start' if kind in ['profile', 'resume_touch'] else kind }}" {% if kind in ['profile', 'resume_touch'] %}hx-vals='{"kind":"{{ kind }}"}'{% endif %} aria-label="{{ start_label or title }}" title="{{ start_label or title }}" aria-describedby="{{ kind }}-context" {{ 'disabled' if blocked }}>{{ icon('play') }}</button>
+      {% endif %}
     </div>
-  </form>
+  </article>
+{%- endmacro %}
 
-  {# Activity is a separate module in its own lane: it can run while the main
-     job collects or applies, so it gets its own controls. #}
-  <div class="lane-activity">
-    <span class="lane-label">Имитация активности</span>
-    {% if activity_task and activity_task.as_dict().is_running %}
-      {% set a = activity_task.as_dict() %}
-      <span class="badge running">идёт</span>
-      <span class="muted small">{{ a.message or '—' }}</span>
-      {% if a.total %}<span class="muted small">{{ a.percent }}%</span>{% endif %}
-      <button type="button" class="danger" hx-post="/actions/stop" hx-vals='{"lane": "activity"}'>
-        Остановить
-      </button>
-    {% else %}
-      <span class="muted small">
-        {% if activity_task %}
-          прошлый прогон: {{ activity_task.as_dict().status }}
-        {% else %}
-          не запущена
-        {% endif %}
-      </span>
-      <button type="button" hx-post="/actions/activity">Запустить параллельно</button>
-    {% endif %}
-  </div>
+<div class="action-dashboard" id="task-panel" hx-target="#task-panel" hx-swap="outerHTML">
+  {% if not panel_resume %}
+    <div class="resume-banner">
+      <span class="resume-banner-icon">{{ icon('resume') }}</span>
+      <div><h2>Нужно резюме</h2><p>Добавьте резюме, чтобы искать вакансии, оценивать их и отправлять отклики.</p></div>
+      <a class="btn" href="/resume#resume-import">Добавить резюме</a>
+    </div>
+  {% else %}
+    <div class="resume-banner has-resume">
+      <span class="resume-banner-icon">{{ icon('resume') }}</span>
+      <div><p>Активное резюме</p><h2>{{ panel_resume.title or 'Без названия' }}</h2></div>
+      <a class="btn" href="/resume">Изменить</a>
+    </div>
+  {% endif %}
 
+  <section class="main-actions" aria-labelledby="main-actions-title">
+    <h2 id="main-actions-title">Основные действия</h2>
+    <div class="action-grid">
+      {{ action_card('collect', 'Собрать вакансии', 'Найдёт вакансии по вашему запросу и сохранит их в разделе «Вакансии».', config='search') }}
+      {{ action_card('score', 'Оценить соответствие вакансий резюме', 'Нейросеть сравнит найденные вакансии с резюме и поставит оценку от 0 до 100.', needs_llm=true, config='llm', start_label='Оценить вакансии') }}
+      {{ action_card('apply', 'Отправить отклики', 'Отправит отклики от вашего имени на вакансии с оценкой выше заданного порога.', config='apply') }}
+      {{ action_card('pipeline', 'Выполнить несколько действий подряд', 'Выполнит выбранные действия по очереди.', config='pipeline', start_label='Запустить') }}
+    </div>
+  </section>
+  <section class="search-tools" id="search-tools" aria-labelledby="search-tools-title">
+    <h2 id="search-tools-title">Дополнительные действия</h2>
+    <div class="action-grid">
+      {{ action_card('login', 'Войти в hh.ru', 'Откроет браузер для входа в ваш аккаунт.', needs_resume=false) }}
+      {{ action_card('resume_touch', 'Поднять резюме в поиске', 'Обновит дату публикации резюме, чтобы поднять его в поиске hh.ru.', start_label='Поднять резюме') }}
+      {{ action_card('profile', 'Обновить описание опыта', 'Нейросеть заново соберёт профиль кандидата из резюме и дополнительных сведений о вашем опыте.', lane='profile', needs_llm=true, config='llm', start_label='Обновить профиль') }}
+      {{ action_card('activity', 'Просматривать hh.ru в фоне', 'Будет открывать и прокручивать вакансии, имитируя обычный просмотр сайта.', lane='activity', needs_resume=false, start_label='Начать просмотр') }}
+    </div>
+  </section>
+  {% for slot_name, label in [('activity', 'Фоновый просмотр'), ('profile', 'Описание опыта')] %}
+    {% set finished_slot = tasks.lane(slot_name) %}
+    {% if finished_slot.current and not finished_slot.is_busy %}<p class="muted small">{{ label }}: {{ finished_slot.current.message or 'Завершено' }}</p>{% endif %}
+  {% endfor %}
   {% if error %}<p class="error">{{ error }}</p>{% endif %}
 
   {% if current_task %}
     {% set t = current_task.as_dict() %}
     <div class="task-status {{ t.status }}">
       <div class="task-line">
-        <strong>{{ t.kind }}</strong>
-        <span class="badge {{ t.status }}">{{ t.status }}</span>
+        <strong>{{ {'pipeline': 'Несколько действий подряд', 'collect': 'Поиск вакансий', 'score': 'Оценка вакансий', 'apply': 'Отправка откликов', 'login': 'Вход в hh.ru', 'resume_import': 'Добавление резюме', 'resume_touch': 'Поднятие резюме', 'profile': 'Обновление профиля'}.get(current_task.params.get('action', t.kind), t.kind) }}</strong>
+        <span class="badge {{ t.status }}">{{ {'running': 'Выполняется', 'completed': 'Готово', 'failed': 'Не удалось выполнить', 'cancelled': 'Остановлено', 'pending': 'Ожидает запуска'}.get(t.status, t.status) }}</span>
         {% if t.trigger == 'schedule' %}<span class="badge">по расписанию</span>{% endif %}
         <span class="task-message" id="task-message">{{ t.message or '—' }}</span>
+        {% if not tasks.is_busy and t.status in ['completed', 'failed', 'cancelled'] %}
+          <button type="button" class="ghost dismiss-task" hx-post="/actions/dismiss"
+                  hx-vals='{{ {"task_id": t.id} | tojson }}' title="Скрыть сообщение; запись останется в прогонах">Скрыть</button>
+        {% endif %}
       </div>
+      {% if tasks.is_busy and t.kind == 'resume_import' %}
+        <button type="button" class="danger" hx-post="/actions/stop">{{ 'Остановить принудительно' if tasks.stop_requested else 'Остановить задачу' }}</button>
+      {% endif %}
       {% if t.total %}
         <div class="progress"><div class="bar" id="task-bar" style="width: {{ t.percent }}%"></div></div>
         <div class="muted" id="task-counter">{{ t.done }} / {{ t.total }}</div>
@@ -77,20 +126,16 @@
       {% endif %}
       {% if t.error_message %}<p class="error">{{ t.error_message }}</p>{% endif %}
     </div>
-  {% else %}
-    <div class="task-status idle"><span class="muted">Задача не запущена</span></div>
   {% endif %}
 
+  {% set cycles = scheduler.status() | selectattr('enabled') | list %}
+  {% if cycles %}
   <div class="schedule-note muted">
-    {% set cycles = scheduler.status() | selectattr('enabled') | list %}
-    {% if cycles %}
       Расписание:
       {% for cycle in cycles %}
         {{ cycle.title }} — каждые {{ cycle.interval_minutes }} мин
         (следующий {{ cycle.next_run_at | short_dt }}){{ '; ' if not loop.last }}
       {% endfor %}
-    {% else %}
-      Расписание выключено
-    {% endif %}
   </div>
+  {% endif %}
 </div>

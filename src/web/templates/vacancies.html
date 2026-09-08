@@ -35,7 +35,8 @@
     <a class="link" href="/vacancies">Сбросить</a>
   </form>
 
-  <form method="post" action="/actions/apply" hx-post="/actions/apply" hx-target="#task-panel" hx-swap="outerHTML">
+  <form method="post" action="/actions/apply">
+    <input type="hidden" name="return_to" value="actions">
     <div class="bulk-bar">
       <label><input type="checkbox" id="check-all"> выделить все на странице</label>
       <button type="submit" class="primary" {{ 'disabled' if tasks.is_busy }}>Откликнуться на выбранные</button>

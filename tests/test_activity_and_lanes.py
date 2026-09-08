@@ -8,7 +8,7 @@ from anyio.from_thread import start_blocking_portal
 from fastapi.testclient import TestClient
 
 from src.config import BrowserConfig, Config
-from src.db.models import TaskKind, TaskStatus
+from src.db.models import Resume, TaskKind, TaskRun, TaskStatus
 from src.web.app import create_app
 from src.web.tasks import LANE_ACTIVITY, LANE_MAIN, TaskBusyError
 
@@ -114,12 +114,20 @@ def test_stopping_one_lane_leaves_the_other_running(client):
 
 def test_panel_shows_both_lanes(client):
     panel = client.get("/partials/status").text
-    assert "Имитация активности" in panel
+    assert "Просматривать hh.ru в фоне" in panel
     assert 'hx-post="/actions/activity"' in panel
-    assert 'value="resume_touch"' in panel  # resume refresh is a runner option
+    assert 'hx-vals=\'{"kind":"resume_touch"}\'' in panel
 
 
-def test_activity_endpoint_starts_the_activity_lane(client):
+def test_activity_endpoint_starts_the_activity_lane(client, monkeypatch):
+    from unittest.mock import AsyncMock
+    from src.web import jobs
+
+    monkeypatch.setattr(jobs, "activity_job", AsyncMock(return_value={}))
+    with start_blocking_portal() as portal:
+        repository = client.app.state.repository
+        portal.call(repository.create_task_run, TaskRun(id="login-ok", kind=TaskKind.LOGIN))
+        portal.call(repository.finish_task_run, "login-ok", TaskStatus.COMPLETED, {"logged_in": True})
     response = client.post("/actions/activity")
     assert response.status_code == 200
 
@@ -569,3 +577,28 @@ def test_instant_is_the_default_load_mode(client):
 
     client.post("/actions/settings", data={"scroller.load_mode": "scroll"}, follow_redirects=False)
     assert client.app.state.settings.scroller_config().load_mode == "scroll"
+
+
+@pytest.mark.parametrize("has_resume", [False, True])
+@pytest.mark.parametrize("login_result", [None, False, True])
+def test_activity_availability_depends_on_login_not_resume(client, has_resume, login_result):
+    import re
+
+    repository = client.app.state.repository
+    with start_blocking_portal() as portal:
+        if has_resume:
+            rid = portal.call(repository.upsert_resume, Resume(source_url="https://hh.ru/resume/login-qa"))
+            portal.call(repository.set_active_resume, rid)
+        if login_result is not None:
+            portal.call(repository.create_task_run, TaskRun(id="login-state", kind=TaskKind.LOGIN))
+            portal.call(repository.finish_task_run, "login-state", TaskStatus.COMPLETED, {"logged_in": login_result})
+    panel = client.get("/partials/status").text
+    button = re.search(r'<button[^>]*hx-post="/actions/activity"[^>]*>', panel).group()
+    assert ("disabled" not in button) == (login_result is True)
+    assert ('id="activity-login-required"' in panel) == (login_result is not True)
+    if login_result is not True:
+        for endpoint, data in [("/actions/activity", {}), ("/actions/start", {"kind": "activity"})]:
+            assert "Для фонового просмотра сначала войдите в hh.ru." in client.post(endpoint, data=data).text
+        with start_blocking_portal() as portal:
+            runs = portal.call(repository.list_task_runs, 20)
+        assert all(run["kind"] != "activity" for run in runs)

@@ -30,8 +30,9 @@ body {
   background: var(--bg);
   color: var(--text);
   font: 15px/1.5 -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
-  padding-bottom: 220px;
 }
+
+body.with-console { padding-bottom: 220px; }
 
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
@@ -66,32 +67,78 @@ h2 { margin: 0 0 14px; font-size: 17px; }
 .card-value { font-size: 30px; font-weight: 700; }
 .card-label { color: var(--muted); font-size: 13px; }
 
-/* --- task panel --- */
-.runner { display: flex; flex-direction: column; gap: 16px; }
-.runner-options { display: flex; gap: 10px; flex-wrap: wrap; }
-/* Radio group styled as plain buttons: the whole button shows the choice,
-   so the native dot is hidden (kept in the DOM for keyboard and a11y). */
-.runner-option {
-  position: relative; display: inline-flex; align-items: center; cursor: pointer;
-  padding: 10px 18px; border-radius: 10px; line-height: 1.2; color: var(--muted);
-  border: 1px solid var(--border); background: var(--panel-2);
-  transition: border-color .15s ease, background .15s ease, color .15s ease;
-}
-.runner-option:hover { border-color: var(--accent); color: var(--text); }
-.runner-option:has(input:checked) {
-  border-color: var(--accent); background: rgba(79, 140, 255, .18); color: var(--text); font-weight: 500;
-}
-.runner-option:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
-.runner-option input {
-  position: absolute; opacity: 0; width: 0; height: 0; margin: 0; pointer-events: none;
+/* --- action cards --- */
+.action-dashboard { margin-bottom: 24px; }
+.resume-banner { display: flex; align-items: center; gap: 18px; padding: 22px 24px; background: rgba(79,140,255,.07); border: 1px solid rgba(79,140,255,.22); border-radius: 20px; margin-bottom: 28px; }
+.resume-banner-icon { display: grid; place-items: center; width: 48px; height: 48px; flex: none; border-radius: 14px; background: rgba(79,140,255,.12); color: var(--accent); }
+.resume-banner-icon svg { width: 26px; height: 26px; }
+.resume-banner h2 { margin: 0 0 4px; font-size: 17px; }
+.resume-banner p { margin: 0; color: var(--muted); font-size: 13px; }
+.resume-banner > .btn { margin-left: auto; flex: none; font-size: 13px; border-radius: 10px; }
+.main-actions > h2, .search-tools > h2 { font-size: 15px; margin: 0 0 14px; }
+.search-tools { margin-top: 28px; }
+.action-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+.action-card { display: flex; flex-direction: column; min-width: 0; min-height: 250px; padding: 20px; border: 1px solid var(--border); border-radius: 20px; background: var(--panel); transition: border-color .15s, background .15s; }
+.action-card:not(.is-blocked):hover { border-color: rgba(79,140,255,.5); }
+.action-card-heading { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 10px; }
+.action-card h3 { font-size: 15px; font-weight: 500; line-height: 1.45; margin: 0; flex: 1; }
+.action-description { margin: 0; font-size: 13px; line-height: 1.6; color: var(--muted); }
+.card-lock { color: var(--muted); flex: none; opacity: .65; }
+.card-lock svg { width: 16px; height: 16px; }
+.action-card.is-blocked { background: color-mix(in srgb, var(--panel) 65%, var(--bg)); }
+.action-card.is-blocked h3, .action-card.is-blocked .action-description { opacity: .65; }
+.action-card.is-running { border-color: var(--accent); background: rgba(79,140,255,.06); }
+.running-dot { width: 7px; height: 7px; margin-top: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 4px rgba(79,140,255,.1); }
+.action-hint { margin: 14px 0 18px; min-height: 18px; font-size: 12px; color: var(--muted); }
+.action-hint .link { font-size: 12px; color: var(--danger); text-align: left; }
+.running-label { color: var(--accent); }
+.action-card-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: auto; }
+.card-settings-slot { display: flex; }
+.action-card .card-settings { display: inline-grid; place-items: center; width: 36px; height: 36px; padding: 0; border: 1px solid transparent; border-radius: 10px; background: transparent; color: var(--muted); cursor: pointer; }
+.action-card .card-settings:hover:not(:disabled) { background: var(--panel-2); color: var(--text); border-color: var(--border); }
+.action-card .card-settings.needs-setup { color: var(--danger); }
+.action-card .action-control { display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border-radius: 50%; background: var(--accent); color: #fff; border: 1px solid transparent; }
+.action-card .action-control:disabled { background: var(--panel-2); color: var(--muted); border-color: var(--border); opacity: .55; }
+.action-card .action-control.is-stop { background: rgba(226,86,77,.12); color: var(--danger); border-color: rgba(226,86,77,.25); }
+.action-card button:focus-visible, .action-card a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.action-buttons { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.step-query { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; max-width: 540px; margin: 0 0 10px; }
+.step-query label { width: 100%; font-size: 12px; }
+.step-query input { flex: 1; width: 100%; min-width: 180px; font-size: 13px; background: var(--panel-2); }
+.step-query input:disabled { color: var(--muted); cursor: not-allowed; opacity: .7; }
+.step-query input::placeholder { color: var(--muted); }
+.task-status > button { margin-top: 12px; }
+@media (max-width: 1100px) { .action-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 600px) {
+  .action-grid { grid-template-columns: minmax(0, 1fr); }
+  .action-card { min-height: 220px; }
+  .resume-banner { flex-wrap: wrap; padding: 20px; gap: 12px; }
+  .resume-banner > div { flex: 1; }
+  .resume-banner > .btn { margin-left: 60px; }
 }
 
-.runner-controls {
-  display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
-  padding-top: 14px; border-top: 1px solid var(--border);
-}
-.runner-controls button { padding: 9px 22px; }
-.runner-controls .llm-slot { margin-left: auto; }
+.pipeline-dialog { width: min(560px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow-y: auto; padding: 24px; color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 24px 80px #0008; }
+.pipeline-dialog::backdrop { background: #0009; }
+.pipeline-dialog { color-scheme: light dark; overflow: hidden; scrollbar-width: thin; scrollbar-color: var(--muted) var(--panel); }
+.pipeline-dialog[open] { display: flex; flex-direction: column; }
+.pipeline-dialog .dialog-heading { flex-shrink: 0; }
+.pipeline-dialog > [id$="-dialog-content"] { min-height: 0; overflow-y: auto; margin-top: 16px; padding-right: 8px; }
+.pipeline-dialog * { scrollbar-width: thin; }
+.pipeline-dialog::-webkit-scrollbar, .pipeline-dialog ::-webkit-scrollbar { width: 8px; height: 8px; }
+.pipeline-dialog::-webkit-scrollbar-track, .pipeline-dialog ::-webkit-scrollbar-track { background: var(--panel); }
+.pipeline-dialog::-webkit-scrollbar-thumb, .pipeline-dialog ::-webkit-scrollbar-thumb { background: var(--muted); border: 2px solid var(--panel); border-radius: 8px; }
+.dialog-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.dialog-heading h2 { margin: 0; font-size: 20px; }
+.dialog-heading button { font-size: 22px; line-height: 1; padding: 6px 10px; }
+.pipeline-dialog form > p { font-size: 13px; }
+.pipeline-choices { display: flex; flex-direction: column; gap: 10px; }
+.pipeline-choice { display: flex; gap: 12px; align-items: flex-start; padding: 14px; border: 1px solid var(--border); border-radius: 10px; cursor: pointer; }
+.pipeline-choice:has(input:checked) { border-color: var(--accent); background: rgba(79, 140, 255, .08); }
+.pipeline-choice input { flex: none; margin: 3px 0 0; }
+.pipeline-choice strong { display: block; font-size: 14px; font-weight: 500; }
+.pipeline-choice small { display: block; color: var(--muted); margin-top: 4px; font-size: 12px; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 10px; padding-top: 16px; border-top: 1px solid var(--border); }
+body:has(.pipeline-dialog[open]) { overflow: hidden; }
 
 /* --- llm lamp --- */
 .llm-status {
@@ -122,6 +169,7 @@ h2 { margin: 0 0 14px; font-size: 17px; }
 .model-field select, .model-field input { min-width: 260px; }
 .task-status { margin-top: 16px; padding: 13px 15px; background: var(--panel-2); border-radius: var(--radius); }
 .task-line { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.task-line .dismiss-task { margin-left: auto; font-size: 13px; }
 .task-message { color: var(--muted); }
 .progress { height: 6px; background: var(--border); border-radius: 3px; margin: 10px 0 6px; overflow: hidden; }
 .progress .bar { height: 100%; background: var(--accent); transition: width .3s ease; }
@@ -146,6 +194,7 @@ button, .btn {
 button:hover:not(:disabled), .btn:hover { border-color: var(--accent); text-decoration: none; }
 button:disabled { opacity: .45; cursor: not-allowed; }
 button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.primary:disabled { background: var(--panel-2); border-color: var(--border); color: var(--text); }
 button.danger { color: var(--danger); }
 button.ghost { background: transparent; }
 button.link, .link { background: none; border: none; color: var(--accent); padding: 0; cursor: pointer; }
@@ -168,6 +217,11 @@ textarea { width: 100%; resize: vertical; }
   border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 16px; padding: 14px 16px;
 }
 .settings-form legend { padding: 0 6px; color: var(--accent); font-weight: 600; }
+.settings-form input, .settings-form select { scroll-margin-top: 100px; }
+.settings-form .field:has(:target) { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 4px; }
+@media (max-width: 760px) {
+  .settings-form input, .settings-form select { scroll-margin-top: 160px; }
+}
 .field { display: grid; grid-template-columns: 320px 1fr; gap: 10px; align-items: center; padding: 7px 0; }
 .field label { color: var(--muted); }
 .field small { grid-column: 2; margin-top: -4px; font-size: 12px; }
@@ -264,3 +318,14 @@ details.letter .raw-text { margin-top: 6px; max-width: 640px; max-height: 260px;
   flex: 1; margin: 0; padding: 10px 20px; overflow-y: auto; white-space: pre-wrap;
   font: 12px/1.6 ui-monospace, "Cascadia Code", Consolas, monospace; color: var(--muted);
 }
+
+/* Reply settings use the same controls in a narrow, scrollable dialog. */
+.apply-dialog { width: min(700px, calc(100vw - 32px)); }
+.apply-settings-form fieldset { min-width: 0; margin: 24px 0; padding: 16px; border: 1px solid var(--border); border-radius: 12px; }
+.apply-settings-form legend { padding: 0 8px; font-weight: 600; }
+.apply-settings-form .field { grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 10px 0; }
+.apply-settings-form .field small, .apply-settings-form .field textarea { grid-column: 1; }
+.apply-settings-form .field input:not([type=checkbox]), .apply-settings-form .field select, .apply-settings-form .field textarea { width: 100%; min-width: 0; }
+.apply-settings-form .field:has(input[type=checkbox]) { grid-template-columns: minmax(0, 1fr) auto; }
+.apply-settings-form .field:has(input[type=checkbox]) small { grid-column: 1 / -1; }
+.apply-settings-form .dialog-actions { position: sticky; bottom: 0; padding: 16px 0 0; background: var(--panel); }

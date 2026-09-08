@@ -175,7 +175,7 @@ class Scheduler:
 
         logger.info("scheduled run starting: %s", entry.name)
         try:
-            await self.manager.start(entry.kind, entry.job, trigger="schedule", lane=entry.lane)
+            await self.manager.start(entry.kind, entry.job, trigger="schedule", lane=entry.lane, params={"action": entry.name})
         except TaskBusyError:
             entry.next_run_at = now + timedelta(minutes=POSTPONE_MINUTES)
             return

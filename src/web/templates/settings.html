@@ -1,47 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Настройки — job-bless{% endblock %}
 
-{% macro render_field(field) %}
-  <div class="field {{ 'field-wide' if field.type in ('text', 'str') }}">
-    <label for="f-{{ field.key }}">
-      {{ field.label }}
-      {% if not field.is_default %}<span class="badge small-badge">изменено</span>{% endif %}
-    </label>
-
-    {% if field.type == 'bool' %}
-      <input type="checkbox" id="f-{{ field.key }}" name="{{ field.key }}" value="1"
-             {{ 'checked' if field.value }}>
-    {% elif field.type == 'choice' %}
-      <select id="f-{{ field.key }}" name="{{ field.key }}">
-        {% for choice in field.choices %}
-          <option value="{{ choice }}" {{ 'selected' if field.value == choice }}>{{ choice or '—' }}</option>
-        {% endfor %}
-      </select>
-    {% elif field.type == 'model' %}
-      {# Loads the dropdown once the page is up, so rendering never waits
-         on the network; the input below is the fallback. #}
-      <div class="model-field" hx-get="/actions/llm-models?field={{ field.key }}"
-           hx-trigger="load" hx-target="this" hx-swap="outerHTML">
-        <input type="text" id="f-{{ field.key }}" name="{{ field.key }}" value="{{ field.value }}">
-        <small class="muted">загружаю список моделей…</small>
-      </div>
-    {% elif field.type == 'text' %}
-      <textarea id="f-{{ field.key }}" name="{{ field.key }}" rows="5">{{ field.value }}</textarea>
-    {% elif field.type == 'secret' %}
-      <input type="password" id="f-{{ field.key }}" name="{{ field.key }}"
-             placeholder="{{ '•••••• (сохранён)' if field.value else 'не задан' }}" autocomplete="off">
-    {% elif field.type in ('int', 'float') %}
-      <input type="number" id="f-{{ field.key }}" name="{{ field.key }}" value="{{ field.value }}"
-             step="{{ '1' if field.type == 'int' else 'any' }}"
-             {% if field.minimum is not none %}min="{{ field.minimum }}"{% endif %}
-             {% if field.maximum is not none %}max="{{ field.maximum }}"{% endif %}>
-    {% else %}
-      <input type="text" id="f-{{ field.key }}" name="{{ field.key }}" value="{{ field.value }}">
-    {% endif %}
-
-    {% if field.help %}<small class="muted">{{ field.help }}</small>{% endif %}
-  </div>
-{% endmacro %}
+{% from 'partials/settings_field.html' import render_field %}
 
 {% block content %}
 <section class="block">
@@ -68,7 +28,8 @@
           </div>
         {% endif %}
 
-        {% for field in fields.main %}{{ render_field(field) }}{% endfor %}
+        {% set stage_keys = ['schedule.do_collect', 'schedule.do_score', 'schedule.do_apply'] %}
+        {% for field in fields.main if field.key not in stage_keys %}{{ render_field(field) }}{% endfor %}
 
         {% if fields.advanced %}
           {# Set-once knobs: kept out of the way, opened when a value differs

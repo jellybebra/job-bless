@@ -1,0 +1,25 @@
+<form {% if panel_resume %}hx-post="/actions/resume/{{ panel_resume.id }}/search-query"{% endif %}
+      hx-target="#search-dialog-content" hx-swap="innerHTML" hx-disabled-elt="find button[type='submit']">
+  <p class="muted">Помощник будет искать вакансии на hh.ru по этому запросу.</p>
+  <div class="step-query">
+    <label for="panel-search-query">Какую работу ищете</label>
+    <input id="panel-search-query" name="search_query" type="text"
+           value="{{ panel_resume.search_query if panel_resume else '' }}"
+           placeholder="Например, Python-разработчик" aria-describedby="search-query-help"
+           {{ 'disabled' if not panel_resume or tasks.is_busy }}>
+  </div>
+  <p class="muted" id="search-query-help">
+    {% if not panel_resume %}
+      Поле станет доступно, когда вы <a href="/resume#resume-import">добавите резюме</a>.
+    {% elif tasks.is_busy %}
+      Дождитесь завершения текущей задачи, чтобы изменить запрос.
+    {% else %}
+      Укажите должность или ключевые слова. Сохранение не запускает поиск вакансий.
+    {% endif %}
+  </p>
+  <p class="error" id="search-save-error" role="alert" {{ 'hidden' if not error }}>{{ error }}</p>
+  <div class="dialog-actions">
+    <button type="button" data-close-search>Отмена</button>
+    <button type="submit" class="primary" {{ 'disabled' if not panel_resume or tasks.is_busy }}>Сохранить</button>
+  </div>
+</form>

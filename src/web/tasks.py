@@ -288,6 +288,15 @@ class TaskManager:
             del self.history[20:]
             self.publish({"type": "finished", "lane": lane.name, "task": state.as_dict()})
 
+    def dismiss(self, task_id: str, lane: str = LANE_MAIN) -> bool:
+        target = self.lane(lane)
+        if (target.is_busy or not target.current or target.current.id != task_id
+                or target.current.status not in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED)):
+            return False
+        target.current = None
+        self.publish({"type": "dismissed", "lane": lane})
+        return True
+
     # --- stopping ---------------------------------------------------------
 
     def add_stop_hook(self, callback: Callable[[], Any], *, lane: str = LANE_MAIN) -> None:

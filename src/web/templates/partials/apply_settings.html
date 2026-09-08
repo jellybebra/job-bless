@@ -1,0 +1,18 @@
+{% from 'partials/settings_field.html' import render_field %}
+<form class="apply-settings-form" hx-post="/actions/apply-settings" hx-target="#apply-dialog-content"
+      hx-swap="innerHTML" hx-disabled-elt="find button[type='submit']">
+  <p class="muted">Настройки действуют и при отдельном запуске, и в последовательности действий.</p>
+  <div class="error-box" id="apply-save-error" role="alert" {{ 'hidden' if not errors }}>
+    {% for error in errors %}<p>{{ error }}</p>{% endfor %}
+  </div>
+  {% for title, fields in sections %}
+    <fieldset>
+      <legend>{{ title }}</legend>
+      {% for field in fields %}{{ render_field(field) }}{% endfor %}
+    </fieldset>
+  {% endfor %}
+  <div class="dialog-actions">
+    <button type="button" data-close-apply>Отмена</button>
+    <button type="submit" class="primary">Сохранить</button>
+  </div>
+</form>

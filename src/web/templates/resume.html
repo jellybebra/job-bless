@@ -2,12 +2,11 @@
 {% block title %}Резюме — job-bless{% endblock %}
 
 {% block content %}
-<section class="block">
+<section class="block" id="resume-import">
   <h2>Импорт резюме с hh.ru</h2>
   <p class="muted">
     Вставьте ссылку на своё резюме вида <code>https://hh.ru/resume/&lt;id&gt;</code>.
-    Резюме откроется в вашем залогиненном Chrome, распарсится и сохранится в базу —
-    именно с ним будут сравниваться вакансии.
+    Помощник откроет резюме в Chrome и сохранит его здесь, чтобы сравнивать с ним вакансии.
   </p>
   <form method="post" action="/actions/resume/import" class="inline-form">
     <input type="url" name="resume_url" placeholder="https://hh.ru/resume/..." required
@@ -15,7 +14,7 @@
     <button type="submit" class="primary" {{ 'disabled' if tasks.is_busy }}>Импортировать</button>
   </form>
   <p class="muted small">
-    Нужен активный вход в hh.ru — если резюме не открывается, нажмите «Войти в hh.ru» на панели сверху.
+    Если резюме не открывается, <a href="/actions#search-tools">войдите в hh.ru на странице «Действия»</a>.
   </p>
 </section>
 
