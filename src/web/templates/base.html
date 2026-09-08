@@ -26,9 +26,16 @@
 </main>
 
 <section class="console" id="console-block">
+  <div class="console-resize" id="console-resize" role="separator" tabindex="0"
+       aria-label="Высота журнала" aria-orientation="horizontal" aria-controls="log"
+       aria-valuemin="120" aria-valuemax="600" aria-valuenow="200"
+       title="Потяните вверх или вниз, чтобы изменить высоту журнала"></div>
   <div class="console-head">
     <span>Журнал текущей задачи</span>
-    <button type="button" class="link" onclick="document.getElementById('log').textContent=''">очистить</button>
+    <div class="console-actions">
+      <button type="button" class="link" onclick="document.getElementById('log').textContent=''">Очистить</button>
+      <button type="button" class="link" id="console-toggle" aria-expanded="true" aria-controls="log">Свернуть</button>
+    </div>
   </div>
   <pre id="log">{% if current_task %}{{ current_task.logs | join('\n') }}{% endif %}</pre>
 </section>

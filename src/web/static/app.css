@@ -30,7 +30,7 @@ body {
   background: var(--bg);
   color: var(--text);
   font: 15px/1.5 -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
-  padding-bottom: 220px;
+  padding-bottom: calc(var(--console-space, 200px) + 20px);
 }
 
 a { color: var(--accent); text-decoration: none; }
@@ -254,13 +254,28 @@ details.letter .raw-text { margin-top: 6px; max-width: 640px; max-height: 260px;
 /* --- console --- */
 .console {
   position: fixed; bottom: 0; left: 0; right: 0; height: 200px;
+  z-index: 20;
   background: var(--panel); border-top: 1px solid var(--border); display: flex; flex-direction: column;
 }
+.console.is-collapsed { height: auto !important; }
+.console.is-collapsed #log, .console.is-collapsed .console-resize { display: none; }
+.console-resize {
+  height: 10px; flex: 0 0 10px; cursor: ns-resize; touch-action: none;
+  display: flex; align-items: center; justify-content: center;
+}
+.console-resize::after {
+  content: ""; width: 44px; height: 3px; border-radius: 3px; background: var(--border);
+}
+.console-resize:hover::after, .console-resize:focus-visible::after { background: var(--accent); }
+.console-resize:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+body.console-resizing { cursor: ns-resize; user-select: none; }
 .console-head {
   display: flex; justify-content: space-between; align-items: center;
+  flex-shrink: 0; gap: 12px;
   padding: 6px 20px; border-bottom: 1px solid var(--border); font-size: 12px; color: var(--muted);
 }
+.console-actions { display: flex; align-items: center; gap: 12px; }
 #log {
-  flex: 1; margin: 0; padding: 10px 20px; overflow-y: auto; white-space: pre-wrap;
+  flex: 1; min-height: 0; margin: 0; padding: 10px 20px; overflow-y: auto; white-space: pre-wrap;
   font: 12px/1.6 ui-monospace, "Cascadia Code", Consolas, monospace; color: var(--muted);
 }
