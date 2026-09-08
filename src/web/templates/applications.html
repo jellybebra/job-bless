@@ -6,7 +6,6 @@
 <section class="history-page">
   <header class="page-heading">
     <div><h1>Отклики <span class="muted">{{ total }}</span></h1><p class="muted">История отправки, оценки вакансий и сопроводительные письма.</p></div>
-    <a class="btn" href="/vacancies">Выбрать вакансии</a>
   </header>
   <nav class="history-filters" aria-label="Статус отклика">
     <a class="chip {{ 'chip-active' if not status }}" href="/applications" {% if not status %}aria-current="page"{% endif %}>Все <strong>{{ by_status.values() | sum }}</strong></a>

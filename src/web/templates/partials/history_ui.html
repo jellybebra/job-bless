@@ -10,7 +10,7 @@
 <div class="page-empty">
   <div class="empty-icon">{{ icon(symbol) }}</div>
   <h2>{{ title }}</h2><p class="muted">{{ description }}</p>
-  <a class="btn" href="{{ href }}">{{ label }}</a>
+  {% if href %}<a class="btn" href="{{ href }}">{{ label }}</a>{% endif %}
 </div>
 {%- endmacro %}
 

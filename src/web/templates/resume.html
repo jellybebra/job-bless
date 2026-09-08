@@ -1,5 +1,4 @@
 {% extends "base.html" %}
-{% from "partials/history_ui.html" import icon %}
 {% block title %}Резюме — job-bless{% endblock %}
 
 {% block content %}
@@ -8,17 +7,6 @@
   <div><h1>Резюме <span class="muted">{{ resumes | length }}</span></h1><p class="muted">Ваш опыт и предпочтения для поиска подходящих вакансий.</p></div>
   {% if resumes %}<a class="btn" href="#resume-import">Добавить резюме</a>{% endif %}
 </header>
-{% if not resumes %}
-<div class="resume-onboarding">
-  <div class="empty-icon">{{ icon('resume') }}</div>
-  <div><h2>Начните со своего резюме</h2><p class="muted">По нему помощник оценит вакансии и подготовит сопроводительные письма.</p></div>
-  <ol class="resume-steps">
-    <li><strong>Добавьте ссылку</strong><span>Импортируйте резюме с hh.ru.</span></li>
-    <li><strong>Уточните поиск</strong><span>Укажите должность и расскажите об опыте.</span></li>
-    <li><strong>Соберите профиль</strong><span>Подготовьте основу для оценки вакансий.</span></li>
-  </ol>
-</div>
-{% endif %}
 <section class="resume-import" id="resume-import" aria-labelledby="import-heading">
   <h2 id="import-heading">Импорт резюме с hh.ru</h2>
   <p class="muted">

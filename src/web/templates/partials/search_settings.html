@@ -6,14 +6,12 @@
   <div class="step-query">
     <label for="panel-search-query">Какую работу ищете</label>
     <input id="panel-search-query" name="search_query" type="text"
-           value="{{ raw.get('search_query', panel_resume.search_query) if raw is not none and panel_resume else panel_resume.search_query if panel_resume else '' }}"
+           value="{{ raw.get('search_query', panel_search_query) if raw is not none else panel_search_query }}"
            placeholder="Например, Python-разработчик" aria-describedby="search-query-help"
-           {{ 'disabled' if not panel_resume }} {{ 'readonly' if tasks.is_busy }}>
+           {{ 'readonly' if tasks.is_busy }}>
   </div>
   <p class="muted" id="search-query-help">
-    {% if not panel_resume %}
-      Поле станет доступно, когда вы <a href="/resume#resume-import">добавите резюме</a>.
-    {% elif tasks.is_busy %}
+    {% if tasks.is_busy %}
       Дождитесь завершения текущей задачи, чтобы изменить запрос.
     {% else %}
       Укажите должность или ключевые слова. Сохранение не запускает поиск вакансий.
