@@ -2,6 +2,23 @@
 (function () {
   const log = document.getElementById("log");
   const MAX_LINES = 400;
+  let source = null;
+  let reconnectTimer = null;
+  let reloadTimer = null;
+  let pageActive = true;
+
+  function disconnect() {
+    clearTimeout(reconnectTimer);
+    clearTimeout(reloadTimer);
+    reconnectTimer = null;
+    reloadTimer = null;
+    if (source) {
+      source.onmessage = null;
+      source.onerror = null;
+      source.close();
+      source = null;
+    }
+  }
 
   function appendLog(line) {
     if (!log) return;
@@ -31,7 +48,8 @@
   }
 
   function connect() {
-    const source = new EventSource("/actions/events");
+    if (!pageActive || source) return;
+    source = new EventSource("/actions/events");
 
     source.onmessage = function (event) {
       let data;
@@ -57,16 +75,33 @@
         refreshPanel();
         if (data.type === "finished") {
           // Numbers on the current page are stale once a job finishes.
-          setTimeout(function () { window.location.reload(); }, 1200);
+          clearTimeout(reloadTimer);
+          reloadTimer = setTimeout(function () { window.location.reload(); }, 1200);
         }
       }
     };
 
     source.onerror = function () {
-      source.close();
-      setTimeout(connect, 3000); // the server restarts during development
+      disconnect();
+      if (pageActive) {
+        reconnectTimer = setTimeout(function () {
+          reconnectTimer = null;
+          connect();
+        }, 3000); // the server restarts during development
+      }
     };
   }
+
+  // Pages kept in the back/forward cache must release their HTTP connection.
+  window.addEventListener("pagehide", function () {
+    pageActive = false;
+    disconnect();
+  });
+  window.addEventListener("pageshow", function (event) {
+    pageActive = true;
+    connect();
+    if (event.persisted) refreshPanel();
+  });
 
   connect();
 
