@@ -329,3 +329,53 @@ details.letter .raw-text { margin-top: 6px; max-width: 640px; max-height: 260px;
 .apply-settings-form .field:has(input[type=checkbox]) { grid-template-columns: minmax(0, 1fr) auto; }
 .apply-settings-form .field:has(input[type=checkbox]) small { grid-column: 1 / -1; }
 .apply-settings-form .dialog-actions { position: sticky; bottom: 0; padding: 16px 0 0; background: var(--panel); }
+
+/* --- saved vacancies --- */
+.vacancies-page { color-scheme: light dark; }
+.vacancies-heading { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin: 6px 0 22px; }
+.vacancies-heading h1 { margin: 0; font-size: 26px; font-weight: 600; }
+.vacancies-heading h1 span { margin-left: 8px; font-size: 20px; font-weight: 400; }
+.vacancies-heading p { margin: 6px 0 0; }
+.vacancies-context { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; color: var(--muted); font-size: 13px; }
+.vacancies-context strong { color: var(--text); font-weight: 500; }
+.vacancy-filters { padding: 20px; border: 1px solid var(--border); border-radius: 16px; background: var(--panel); margin-bottom: 24px; }
+.vacancy-search-row { display: grid; grid-template-columns: minmax(0, 1fr) 250px; gap: 20px; }
+.vacancy-filters label { display: flex; flex-direction: column; gap: 7px; color: var(--muted); font-size: 13px; }
+.vacancy-filters input, .vacancy-filters select { min-width: 0; font-size: 14px; }
+.vacancy-filter-row { display: flex; align-items: flex-end; gap: 20px; flex-wrap: wrap; margin-top: 18px; }
+.vacancy-filters .score-filter { flex-direction: row; align-items: center; }
+.score-filter input { width: 88px; }
+.vacancy-filters .filter-check { flex-direction: row; align-items: center; min-height: 38px; }
+.vacancy-filter-actions { margin-left: auto; display: flex; align-items: center; gap: 16px; font-size: 14px; }
+.vacancy-selection-bar { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; padding: 0 0 16px; font-size: 13px; }
+.vacancy-selection-bar label { display: flex; align-items: center; gap: 8px; }
+.vacancy-selection-bar button { margin-left: auto; }
+.vacancy-selection-bar p { width: 100%; margin: -8px 0 0; }
+.vacancy-list { border: 1px solid var(--border); border-radius: 16px; background: var(--panel); overflow: hidden; }
+.vacancy-item { display: grid; grid-template-columns: 20px minmax(0, 1fr) 180px; gap: 20px; padding: 24px; }
+.vacancy-item + .vacancy-item { border-top: 1px solid var(--border); }
+.vacancy-item:has(.row-check:checked) { background: rgba(79, 140, 255, .06); }
+.vacancy-select { padding-top: 3px; }
+.vacancy-info { min-width: 0; }
+.vacancy-info h2 { margin: 0 0 6px; font-size: 17px; font-weight: 500; overflow-wrap: anywhere; }
+.vacancy-info h2 a { color: var(--text); }
+.vacancy-company { margin: 0; font-size: 14px; color: var(--muted); }
+.vacancy-salary { margin: 10px 0 0; font-size: 14px; }
+.vacancy-result { display: flex; flex-direction: column; align-items: flex-end; gap: 14px; text-align: right; }
+.vacancy-score { display: flex; align-items: center; gap: 8px; }
+.vacancy-result .badge { text-transform: none; }
+.vacancy-details { margin-top: 14px; font-size: 13px; color: var(--muted); }
+.vacancy-details summary { cursor: pointer; color: var(--accent); }
+.vacancy-details p { margin: 10px 0 0; overflow-wrap: anywhere; }
+.vacancy-empty { text-align: center; padding: 64px 24px; border: 1px dashed var(--border); border-radius: 16px; }
+.vacancy-empty p { max-width: 450px; margin: 0 auto 24px; }
+@media (max-width: 700px) {
+  .vacancies-heading { align-items: flex-start; flex-direction: column; }
+  .vacancy-search-row { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .vacancy-filter-row { gap: 12px; align-items: center; }
+  .vacancy-filter-actions { width: 100%; margin: 4px 0 0; }
+  .vacancy-selection-bar { gap: 12px; }
+  .vacancy-selection-bar button { width: 100%; margin: 0; }
+  .vacancy-item { grid-template-columns: 20px minmax(0, 1fr); gap: 12px; padding: 18px 14px; }
+  .vacancy-result { grid-column: 2; flex-direction: row; align-items: center; justify-content: space-between; text-align: left; }
+}

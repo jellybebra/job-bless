@@ -3,6 +3,7 @@
 import logging
 import math
 from typing import Optional
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import HTMLResponse
@@ -92,6 +93,8 @@ async def vacancies(
         found_for_resume=found_for_resume or None,
     )
     total = await repository.count_vacancies(**filters)
+    pages = max(1, math.ceil(total / PAGE_SIZE))
+    page = min(page, pages)
     rows = await repository.list_vacancies(
         **filters, order=order, limit=PAGE_SIZE, offset=(page - 1) * PAGE_SIZE
     )
@@ -111,6 +114,14 @@ async def vacancies(
         resume=resume,
         resumes=await repository.list_resumes(),
         found_for_resume=found_for_resume,
+        filters_active=bool(search.strip() or min_score is not None or only_scored or only_unapplied or found_for_resume),
+        selectable=any(not row['application_status'] for row in rows),
+        pagination_query=urlencode({key: value for key, value in {
+            'search': search, 'order': order, 'min_score': min_score,
+            'only_scored': '1' if only_scored else None,
+            'only_unapplied': '1' if only_unapplied else None,
+            'found_for_resume': found_for_resume or None,
+        }.items() if value is not None}),
         threshold=int(settings.get("matching.threshold", 70)),
     )
 

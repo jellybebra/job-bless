@@ -126,13 +126,27 @@
     document.getElementById("apply-dialog")?.close();
     document.querySelector("[data-open-apply]")?.focus({ preventScroll: true });
   });
-  // "select all" checkbox on the vacancies page
+  // Selection belongs to the current page; empty selection never starts a batch.
   const checkAll = document.getElementById("check-all");
   if (checkAll) {
+    const boxes = Array.from(document.querySelectorAll(".row-check"));
+    const submit = document.getElementById("apply-selected");
+    const counter = document.getElementById("selection-count");
+    function updateSelection() {
+      const count = boxes.filter(box => box.checked).length;
+      checkAll.checked = boxes.length > 0 && count === boxes.length;
+      checkAll.indeterminate = count > 0 && count < boxes.length;
+      if (counter) counter.textContent = "Выбрано: " + count;
+      if (submit) submit.disabled = count === 0 || submit.dataset.unavailable === "1";
+    }
     checkAll.addEventListener("change", function () {
-      document.querySelectorAll(".row-check").forEach(function (box) {
-        box.checked = checkAll.checked;
-      });
+      boxes.forEach(box => { box.checked = checkAll.checked; });
+      updateSelection();
     });
+    boxes.forEach(box => box.addEventListener("change", updateSelection));
+    document.getElementById("vacancy-selection")?.addEventListener("submit", function (event) {
+      if (!boxes.some(box => box.checked)) event.preventDefault();
+    });
+    updateSelection();
   }
 })();

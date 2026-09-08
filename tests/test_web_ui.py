@@ -832,7 +832,7 @@ def test_apply_settings_modal_persists_only_reply_settings(client):
     for key, value in before.items():
         if key not in APPLY_SETTING_KEYS:
             assert settings.get(key) == value
-    assert 'порог для авто-отбора: 84' in client.get('/vacancies').text
+    assert 'value="84"' in client.get('/settings').text
     assert 'value="84"' in client.get('/actions/apply-settings').text
     client.post('/actions/apply-settings', data={'matching.threshold': '84'})
     assert settings.get('cover_letter.enabled') is False
@@ -856,3 +856,36 @@ def test_invalid_reply_settings_preserve_input_and_change_nothing(client):
     with start_blocking_portal() as portal:
         portal.call(settings.load)
     assert settings.all_values() == before
+
+
+
+def test_empty_vacancy_selection_never_starts_automatic_batch(client):
+    response = client.post('/actions/apply', data={'return_to': 'actions'}, follow_redirects=False)
+    assert response.status_code == 303
+    assert response.headers['location'] == '/vacancies'
+    assert client.app.state.tasks.current is None
+
+
+def test_vacancy_empty_states_distinguish_filters(client):
+    empty = client.get('/vacancies').text
+    assert 'Пока нет сохранённых вакансий' in empty
+    assert 'id="apply-selected"' not in empty
+    filtered = client.get('/vacancies?search=nonexistent').text
+    assert 'Нет вакансий по этим фильтрам' in filtered
+    assert 'Сбросить фильтры' in filtered
+
+
+def test_vacancy_pagination_preserves_all_filters(client, monkeypatch):
+    import html
+    import re
+    from urllib.parse import parse_qs, urlparse
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr(client.app.state.repository, 'count_vacancies', AsyncMock(return_value=30))
+    monkeypatch.setattr(client.app.state.repository, 'list_vacancies', AsyncMock(return_value=[]))
+    params = {'search': 'Python & Go #1', 'found_for_resume': '7', 'min_score': '60',
+              'only_scored': '1', 'only_unapplied': '1', 'order': 'recent'}
+    response = client.get('/vacancies', params=params)
+    href = re.search(r'href="([^"]+)" aria-label="Страница 2"', response.text).group(1)
+    query = parse_qs(urlparse(html.unescape(href)).query)
+    assert query == {**{key: [value] for key, value in params.items()}, 'page': ['2']}

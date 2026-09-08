@@ -102,6 +102,8 @@ async def start_apply(
     vacancy_ids: Optional[List[int]] = Form(None),
     return_to: str = Form(""),
 ):
+    if return_to == "actions" and not vacancy_ids:
+        return RedirectResponse("/vacancies", status_code=303)
     job = functools.partial(jobs.apply_job, vacancy_ids=vacancy_ids) if vacancy_ids else jobs.apply_job
     response = await _start(
         request, TaskKind.APPLY, job, params={"vacancy_ids": vacancy_ids or []}
