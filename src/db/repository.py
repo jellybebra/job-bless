@@ -598,8 +598,9 @@ class DatabaseRepository:
         search: str = "",
         found_for_resume: Optional[int] = None,
         order: str = "score",
-        limit: int = 50,
+        limit: Optional[int] = 50,
         offset: int = 0,
+        include_details: bool = False,
     ) -> List[Dict[str, Any]]:
         order_sql = {
             "score": "s.score DESC NULLS LAST, v.last_discovered_at DESC",
@@ -615,19 +616,22 @@ class DatabaseRepository:
             min_score=min_score, max_score=max_score, only_unapplied=only_unapplied,
             only_scored=only_scored, search=search, found_for_resume=found_for_resume,
         )
+        pagination = "LIMIT ? OFFSET ?" if limit is not None else ""
+        pagination_params = [limit, offset] if limit is not None else []
         query = f"""
             SELECT v.id, v.external_id, v.canonical_url, v.title, v.company_name, v.salary_text,
                    v.city, v.work_format, v.experience, v.last_discovered_at,
                    s.score, s.verdict, s.matched_skills_json, s.missing_skills_json, s.scored_at,
                    a.status AS application_status, a.applied_at, a.cover_letter
+                   {', v.raw_json, v.schedule, v.employment_type' if include_details else ''}
             FROM vacancies v
             LEFT JOIN vacancy_scores s ON s.vacancy_id = v.id AND s.resume_id = ?
             LEFT JOIN vacancy_applications a ON a.external_id = v.external_id
             {where}
-            ORDER BY {order_sql}
-            LIMIT ? OFFSET ?;
+            ORDER BY {order_sql}, v.id DESC
+            {pagination};
         """
-        rows = await self._fetch_all(query, [resume_id, *params, limit, offset])
+        rows = await self._fetch_all(query, [resume_id, *params, *pagination_params])
         for row in rows:
             row["matched_skills"] = _load_json_list(row.pop("matched_skills_json", None))
             row["missing_skills"] = _load_json_list(row.pop("missing_skills_json", None))

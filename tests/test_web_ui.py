@@ -29,6 +29,19 @@ def test_pages_render(client):
         assert "job-bless" in response.text
 
 
+def test_actions_are_the_home_page(client):
+    redirect = client.get("/", follow_redirects=False)
+    assert redirect.status_code == 303
+    assert redirect.headers["location"] == "/actions"
+    response = client.get("/")
+    assert response.url.path == "/actions"
+    assert 'id="task-panel"' in response.text
+    assert 'id="console-block"' in response.text
+    assert 'href="/actions" class="active"' in response.text
+    assert 'class="brand" href="/actions"' in response.text
+    assert "Обзор" not in response.text
+
+
 def test_applications_pagination_keeps_filter_and_clamps_page(client):
     from src.db.models import ApplicationStatus, VacancyApplication
 
@@ -235,9 +248,6 @@ def test_vacancies_page_shows_scores(client):
     assert "91" in page.text
     assert "Полное совпадение по стеку" in page.text
 
-    dashboard = client.get("/")
-    assert "готовы к отклику" in dashboard.text
-
 
 def test_apply_without_resume_reports_error_in_panel(client, monkeypatch):
     # A job that fails must surface in the panel, not crash the request.
@@ -348,7 +358,7 @@ def test_refreshed_lamp_does_not_retrigger_itself(client):
     assert "every 10s" in fragment
 
     # The copy embedded in a page does need the initial load.
-    assert "load, every 10s" in client.get("/").text
+    assert "load, every 10s" in client.get("/settings").text
 
 
 def test_compact_lamp_shows_only_model(client):
@@ -372,7 +382,7 @@ def test_compact_lamp_shows_only_model(client):
     assert "есть подключение" in full and "проверить" in full
 
 
-def test_panel_has_action_settings_buttons_and_dashboard_keeps_health_status(client):
+def test_panel_has_action_settings_buttons_and_settings_keep_health_status(client):
     from src.llm.health import LLMHealth
 
     monitor = client.app.state.llm_health
@@ -385,13 +395,12 @@ def test_panel_has_action_settings_buttons_and_dashboard_keeps_health_status(cli
     assert "search-model" not in panel
     assert "llm-status" not in panel
 
-    dashboard = client.get("/").text
-    assert 'class="llm-text"' in dashboard  # full lamp with the message
-    assert "проверить" in dashboard
+    settings = client.get("/settings").text
+    assert 'class="llm-text"' in settings  # full lamp with the message
+    assert "проверить" in settings
 
 
-def test_llm_lamp_is_on_dashboard_and_settings(client):
-    assert "llm-status" in client.get("/").text
+def test_llm_lamp_is_on_settings(client):
     assert "llm-status" in client.get("/settings").text
 
 
@@ -485,7 +494,7 @@ def _stage_button(panel, kind):
     return match.group()
 
 
-def test_new_user_sees_disabled_actions_with_resume_setup(client):
+def test_new_user_can_collect_but_needs_resume_for_scoring_and_applying(client):
     import re
 
     panel = client.get("/partials/status").text
@@ -496,7 +505,8 @@ def test_new_user_sees_disabled_actions_with_resume_setup(client):
     assert 'aria-label="Настроить оценку вакансий"' in panel
     assert "Собрать вакансии" in panel
     assert "Оценить соответствие вакансий резюме" in panel
-    for kind in ("collect", "score", "apply"):
+    assert "disabled" not in _stage_button(panel, "collect")
+    for kind in ("score", "apply"):
         assert "disabled" in _stage_button(panel, kind)
         assert f'aria-describedby="{kind}-context"' in _stage_button(panel, kind)
     assert "Собрать вакансии" in panel
@@ -504,7 +514,7 @@ def test_new_user_sees_disabled_actions_with_resume_setup(client):
     assert 'id="panel-search-query"' not in panel
     modal = client.get("/actions/search-settings").text
     query = re.search(r'<input\b[^>]*id="panel-search-query"[^>]*>', modal)
-    assert query and "disabled" in query.group()
+    assert query and "disabled" not in query.group()
     assert 'label for="panel-search-query">Какую работу ищете</label>' in modal
     assert 'type="radio"' not in panel
 
@@ -828,7 +838,7 @@ def test_cannot_dismiss_running_task(client):
 
 
 def test_action_panel_and_console_only_appear_on_actions_page(client):
-    for path in ("/", "/vacancies", "/applications", "/resume", "/settings", "/runs"):
+    for path in ("/vacancies", "/applications", "/resume", "/settings", "/runs"):
         page = client.get(path).text
         assert 'href="/actions"' in page
         for element_id in ("task-panel", "console-block", "pipeline-dialog", "search-dialog"):

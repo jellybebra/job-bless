@@ -302,6 +302,16 @@ class SettingsService:
     def legacy_query(self) -> str:
         return self._legacy_query
 
+    @property
+    def search_query(self) -> str:
+        """Saved query for collecting without an active resume."""
+        return self._legacy_query
+
+    async def save_search_query(self, query: str) -> None:
+        query = query.strip()
+        await self.repository.save_settings({"search.query": query})
+        self._legacy_query = query
+
     async def load(self) -> None:
         stored = await self.repository.get_all_settings()
 
@@ -312,7 +322,7 @@ class SettingsService:
         if legacy_url:
             self._search_url_template = legacy_url
             self._legacy_query = extract_search_query(legacy_url)
-        if stored.get("search.query"):
+        if "search.query" in stored:
             self._legacy_query = stored["search.query"]
 
         self._values = {}
@@ -414,7 +424,7 @@ class SettingsService:
 
     @property
     def search_url(self) -> str:
-        """Fallback URL when no resume query is available (kept for display)."""
+        """Search URL used when there is no active resume."""
         return build_search_url(self._search_url_template, self._legacy_query)
 
     def scroller_config(self, query: Optional[str] = None) -> ScrollerConfig:

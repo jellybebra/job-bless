@@ -17,7 +17,7 @@
   {% set missing_llm = needs_llm and not panel_llm_enabled %}
   {% set missing_login = kind == 'activity' and not panel_hh_logged_in %}
   {% set login_activity_busy = kind == 'login' and tasks.activity_busy %}
-  {% set missing_query = kind == 'collect' and panel_resume and not panel_resume.search_query.strip() %}
+  {% set missing_query = (kind == 'collect' or (kind == 'pipeline' and panel_pipeline_collects)) and not panel_search_query.strip() %}
   {% set missing_steps = kind == 'pipeline' and not panel_pipeline_stages %}
   {% set blocked = not running and (busy or missing_resume or missing_llm or missing_login or missing_query or missing_steps or login_activity_busy) %}
   <article class="action-card{{ ' account-card' if kind == 'login' }}{{ ' is-connected' if kind == 'login' and panel_hh_logged_in }}{{ ' is-running' if running }}{{ ' is-blocked' if blocked }}" data-action-id="{{ kind }}">
@@ -41,7 +41,7 @@
       {% elif missing_steps %}Выберите действия для запуска
       {% elif login_activity_busy %}Остановите фоновый просмотр, чтобы сменить аккаунт или войти.
       {% elif busy %}Дождитесь завершения текущего действия
-      {% elif kind == 'collect' %}Ищем: «{{ panel_resume.search_query }}»
+      {% elif kind == 'collect' %}Ищем: «{{ panel_search_query }}»
       {% elif kind == 'apply' %}До {{ panel_apply_limit }} откликов · оценка от {{ panel_threshold }}
       {% elif lane != 'main' %}Может работать параллельно
       {% endif %}
@@ -74,7 +74,7 @@
   {% if not panel_resume %}
     <div class="resume-banner">
       <span class="resume-banner-icon">{{ icon('resume') }}</span>
-      <div><h2>Нужно резюме</h2><p>Добавьте резюме, чтобы искать вакансии, оценивать их и отправлять отклики.</p></div>
+      <div><h2>Резюме не добавлено</h2><p>Добавьте резюме для оценки вакансий и отправки откликов.</p></div>
       <a class="btn" href="/resume#resume-import">Добавить резюме</a>
     </div>
   {% else %}
@@ -88,10 +88,10 @@
   <section class="main-actions" aria-labelledby="main-actions-title">
     <h2 id="main-actions-title">Основные действия</h2>
     <div class="action-grid">
-      {{ action_card('collect', 'Собрать вакансии', 'Найдёт вакансии по вашему запросу и сохранит их в разделе «Вакансии».', config='search') }}
+      {{ action_card('collect', 'Собрать вакансии', 'Найдёт вакансии по вашему запросу и сохранит их в разделе «Вакансии».', needs_resume=false, config='search') }}
       {{ action_card('score', 'Оценить соответствие вакансий резюме', 'Нейросеть сравнит найденные вакансии с резюме и поставит оценку от 0 до 100.', needs_llm=true, config='score', start_label='Оценить вакансии') }}
       {{ action_card('apply', 'Отправить отклики', 'Отправит отклики от вашего имени на вакансии с оценкой выше заданного порога.', config='apply') }}
-      {{ action_card('pipeline', 'Выполнить несколько действий подряд', 'Выполнит выбранные действия по очереди.', config='pipeline', start_label='Запустить') }}
+      {{ action_card('pipeline', 'Выполнить несколько действий подряд', 'Выполнит выбранные действия по очереди.', needs_resume=panel_pipeline_needs_resume, config='pipeline', start_label='Запустить') }}
     </div>
   </section>
   <section class="search-tools" id="search-tools" aria-labelledby="search-tools-title">

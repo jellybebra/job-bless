@@ -24,6 +24,7 @@ async def hh_login_confirmed(repository) -> bool:
 
 async def panel_context(request: Request) -> dict:
     settings = request.app.state.settings
+    resume = await request.app.state.repository.get_active_resume()
     account = await hh_account_status(request.app.state.repository)
     stages = []
     if settings.get("schedule.do_collect", True):
@@ -33,7 +34,10 @@ async def panel_context(request: Request) -> dict:
     if settings.get("schedule.do_apply", False) and settings.get("apply.mode", "manual") == "auto":
         stages.append("отправка откликов работодателям")
     return {
-        "panel_resume": await request.app.state.repository.get_active_resume(),
+        "panel_resume": resume,
+        "panel_search_query": resume.search_query if resume else settings.search_query,
+        "panel_pipeline_collects": bool(settings.get("schedule.do_collect", True)),
+        "panel_pipeline_needs_resume": any(stage != "поиск вакансий" for stage in stages),
         "panel_hh_logged_in": account["logged_in"],
         "panel_hh_account": account,
         "panel_llm_enabled": bool(settings.get("llm.enabled", False)),

@@ -7,7 +7,6 @@
 <section class="history-page">
   <header class="page-heading">
     <div><h1>Прогоны</h1><p class="muted">История задач: что запускалось и чем закончилось.</p></div>
-    <a class="btn" href="/actions">Перейти к действиям</a>
   </header>
   {% if runs %}
   <div class="history-context"><span>Последние прогоны <strong>{{ runs | length }}</strong></span><span>Сначала новые · до 50 записей</span></div>
@@ -30,7 +29,7 @@
     {% endfor %}
   </div>
   {% else %}
-    {{ empty_state('Прогонов ещё не было', 'Запустите сбор вакансий, оценку или другое действие. Здесь появятся результат, время запуска и возможные ошибки.', '/actions', 'Перейти к действиям', 'clock') }}
+    {{ empty_state('Прогонов ещё не было', 'Запустите сбор вакансий, оценку или другое действие. Здесь появятся результат, время запуска и возможные ошибки.', '', '', 'clock') }}
   {% endif %}
 </section>
 {% endblock %}

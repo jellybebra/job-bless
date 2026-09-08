@@ -111,19 +111,18 @@ async def ensure_browser(ctx: TaskContext) -> BrowserConfig:
 # ----------------------------------------------------------------------
 
 async def collect_job(ctx: TaskContext) -> Dict[str, Any]:
-    """Collect vacancies for the active resume, using its own search query."""
+    """Collect using the active resume's query or the standalone search query."""
     resume = await ctx.repository.get_active_resume()
-    if not resume:
-        raise ValueError("Нет активного резюме — импортируйте его на вкладке «Резюме»")
-    if not resume.search_query.strip():
+    query = (resume.search_query if resume else ctx.settings.search_query).strip()
+    if not query:
         raise ValueError(
-            f"У резюме «{resume.title or resume.source_url}» не задан поисковый запрос — "
-            "укажите его на вкладке «Резюме»"
+            "Не задан поисковый запрос — укажите должность в окне «Настроить поиск»"
         )
 
-    scroller_config = ctx.settings.scroller_config(query=resume.search_query)
+    scroller_config = ctx.settings.scroller_config(query=query)
     search_url = scroller_config.search_url
-    ctx.log(f"резюме: {resume.title or resume.source_url} — ищу «{resume.search_query}»")
+    ctx.log(f"резюме: {resume.title or resume.source_url} — ищу «{query}»" if resume
+            else f"поиск без резюме — ищу «{query}»")
 
     browser_config = await ensure_browser(ctx)
     run_id = f"web_{ctx.state.id}"
@@ -140,7 +139,7 @@ async def collect_job(ctx: TaskContext) -> Dict[str, Any]:
             status=SearchRunStatus.RUNNING,
             started_at=datetime.now(timezone.utc),
             # Remembered so the vacancies list can show what each resume found.
-            resume_id=resume.id,
+            resume_id=resume.id if resume else None,
         )
     )
 

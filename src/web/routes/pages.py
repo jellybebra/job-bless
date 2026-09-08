@@ -2,20 +2,35 @@
 
 import logging
 import math
+from datetime import datetime, timezone
 from typing import Optional
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Query, Request
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 
 from src.web.panel import panel_context
 from src.web.action_settings import shared_groups
+from src.web.export import vacancy_csv
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 PAGE_SIZE = 25
+
+
+def _min_score(value: str = Query("", alias="min_score")) -> Optional[int]:
+    """An empty number input is submitted as min_score= by the browser."""
+    if not value.strip():
+        return None
+    try:
+        score = int(value)
+    except ValueError:
+        raise HTTPException(422, "Оценка должна быть целым числом от 0 до 100") from None
+    if not 0 <= score <= 100:
+        raise HTTPException(422, "Оценка должна быть целым числом от 0 до 100")
+    return score
 
 
 async def _render(request: Request, template: str, **context) -> HTMLResponse:
@@ -33,35 +48,9 @@ async def _render(request: Request, template: str, **context) -> HTMLResponse:
     return app.state.templates.TemplateResponse(request, template, context)
 
 
-@router.get("/", response_class=HTMLResponse)
-async def dashboard(request: Request) -> HTMLResponse:
-    repository = request.app.state.repository
-    settings = request.app.state.settings
-
-    resume = await repository.get_active_resume()
-    stats = await repository.get_dashboard_stats(resume.id if resume else None)
-    runs = await repository.list_task_runs(limit=5)
-    threshold = int(settings.get("matching.threshold", 70))
-
-    ready_to_apply = 0
-    if resume:
-        ready_to_apply = await repository.count_vacancies(
-            resume_id=resume.id, min_score=threshold, only_unapplied=True, only_scored=True
-        )
-
-    return await _render(
-        request,
-        "dashboard.html",
-        stats=stats,
-        resume=resume,
-        runs=runs,
-        threshold=threshold,
-        ready_to_apply=ready_to_apply,
-        apply_mode=settings.get("apply.mode", "manual"),
-        # The query belongs to the resume now, not to the global settings.
-        search_query=resume.search_query if resume else "",
-        search_url=settings.search_url_for(resume.search_query) if resume else settings.search_url,
-    )
+@router.get("/")
+async def home() -> RedirectResponse:
+    return RedirectResponse("/actions", status_code=303)
 
 
 @router.get("/actions", response_class=HTMLResponse)
@@ -73,7 +62,7 @@ async def actions_page(request: Request, error: str = Query("")) -> HTMLResponse
 async def vacancies(
     request: Request,
     page: int = Query(1, ge=1),
-    min_score: Optional[int] = Query(None, ge=0, le=100),
+    min_score: Optional[int] = Depends(_min_score),
     search: str = Query(""),
     only_unapplied: bool = Query(False),
     only_scored: bool = Query(False),
@@ -124,6 +113,33 @@ async def vacancies(
             'found_for_resume': found_for_resume or None,
         }.items() if value is not None}),
         threshold=int(settings.get("matching.threshold", 70)),
+    )
+
+
+@router.get("/vacancies/export")
+async def export_vacancies(
+    request: Request,
+    min_score: Optional[int] = Depends(_min_score),
+    search: str = Query(""),
+    only_unapplied: bool = Query(False),
+    only_scored: bool = Query(False),
+    found_for_resume: int = Query(0),
+    order: str = Query("score"),
+) -> StreamingResponse:
+    repository = request.app.state.repository
+    resume = await repository.get_active_resume()
+    rows = await repository.list_vacancies(
+        resume_id=resume.id if resume else None,
+        min_score=min_score, search=search.strip(),
+        only_unapplied=only_unapplied, only_scored=only_scored,
+        found_for_resume=found_for_resume or None, order=order,
+        limit=None, include_details=True,
+    )
+    filename = f"vacancies-{datetime.now(timezone.utc):%Y%m%d-%H%M%S}.csv"
+    return StreamingResponse(
+        vacancy_csv(rows), media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"',
+                 "Cache-Control": "no-store"},
     )
 
 

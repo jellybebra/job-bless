@@ -183,17 +183,20 @@ async def save_search_settings(request: Request) -> HTMLResponse:
     resume = await repository.get_active_resume()
     query = raw.get("search_query", "").strip()
     errors = []
-    if "resume_id" in raw:
-        if not resume or str(resume.id) != raw["resume_id"]:
-            errors.append("Активное резюме изменилось. Откройте настройки заново.")
-        elif query != resume.search_query and request.app.state.tasks.is_busy:
-            errors.append("Дождитесь завершения текущей задачи, чтобы изменить запрос.")
+    expected_resume = str(resume.id) if resume else ""
+    current_query = resume.search_query if resume else request.app.state.settings.search_query
+    if raw.get("resume_id", "") != expected_resume:
+        errors.append("Активное резюме изменилось. Откройте настройки заново.")
+    elif query != current_query and request.app.state.tasks.is_busy:
+        errors.append("Дождитесь завершения текущей задачи, чтобы изменить запрос.")
     if not errors:
         errors = await request.app.state.settings.save(raw, keys=ACTION_KEYS["search"])
     if errors:
         return await _search_settings(request, raw=raw, errors=errors)
-    if "resume_id" in raw and resume and query != resume.search_query:
+    if resume and query != resume.search_query:
         await repository.update_resume_fields(resume.id, query, resume.context_text)
+    elif not resume:
+        await request.app.state.settings.save_search_query(query)
     return await _settings_saved(request, "search")
 
 
@@ -210,7 +213,7 @@ async def update_search_query(
         return await _search_settings(request, error="Дождитесь завершения текущей задачи, чтобы изменить запрос.")
     await repository.update_resume_fields(resume.id, search_query.strip(), resume.context_text)
     response = await _panel(request)
-    # The dashboard and the resume edit form display the same query.
+    # The task panel and the resume edit form display the same query.
     response.headers["HX-Refresh"] = "true"
     return response
 

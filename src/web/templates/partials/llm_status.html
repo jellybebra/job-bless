@@ -5,7 +5,7 @@
    request and the endpoint is hammered in a tight loop.
 
    `compact` (top panel) shows just the lamp and the model; the full form
-   (dashboard, settings) also explains the state. #}
+   (settings) also explains the state. #}
 {% set poll = '/actions/llm-health' + ('?compact=1' if compact else '') %}
 <span class="llm-status {{ llm_health.state if llm_health else 'unknown' }}{{ ' compact' if compact }}"
       hx-get="{{ poll }}"
