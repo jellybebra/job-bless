@@ -31,6 +31,7 @@ function setup() {
     document: {
       getElementById: id => id === "task-panel" ? {} : null,
       querySelector: () => null,
+      querySelectorAll: () => [],
       addEventListener() {},
       body: { addEventListener() {} },
     },

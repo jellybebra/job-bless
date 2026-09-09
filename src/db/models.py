@@ -62,6 +62,7 @@ class Resume:
     experience_text: str = ""
     salary_text: str = ""
     skills: List[str] = field(default_factory=list)
+    verified_skills: List[str] = field(default_factory=list)
     summary: str = ""
     education_text: str = ""
     certificates: List[str] = field(default_factory=list)
@@ -86,6 +87,7 @@ class Resume:
         """Everything known about the candidate, for building the profile."""
         parts = [
             f"РЕЗЮМЕ С HH.RU:\n{self.raw_text}" if self.raw_text else "",
+            f"ПОДТВЕРЖДЁННЫЕ НАВЫКИ HH.RU: {', '.join(self.verified_skills)}" if self.verified_skills else "",
             f"ДОПОЛНИТЕЛЬНО ОТ КАНДИДАТА:\n{self.context_text}" if self.context_text else "",
         ]
         return "\n\n".join(p for p in parts if p)[:max_chars]
@@ -95,6 +97,8 @@ class Resume:
         import hashlib
 
         payload = f"{self.raw_text}\x00{self.context_text}"
+        if self.verified_skills:
+            payload += "\x00" + "\x00".join(sorted(self.verified_skills))
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
 
     @property
@@ -114,9 +118,8 @@ class Resume:
 
         parts = [
             f"Желаемая должность: {self.title}" if self.title else "",
-            f"Город: {self.city}" if self.city else "",
-            f"Зарплатные ожидания: {self.salary_text}" if self.salary_text else "",
             f"Ключевые навыки: {', '.join(self.skills)}" if self.skills else "",
+            f"Подтверждённые навыки hh.ru: {', '.join(self.verified_skills)}" if self.verified_skills else "",
             f"Опыт работы:\n{self.experience_text}" if self.experience_text else "",
             f"Образование:\n{self.education_text}" if self.education_text else "",
             f"Сертификаты: {'; '.join(self.certificates)}" if self.certificates else "",

@@ -1,5 +1,54 @@
 // Live task updates over SSE: append log lines, refresh the task panel.
 (function () {
+  document.querySelectorAll('[data-exit-app]').forEach(button => button.addEventListener('click', async () => {
+    button.disabled = true;
+    try {
+      const response = await fetch('/desktop/exit', {method: 'POST'});
+      if (!response.ok) throw new Error('Exit failed');
+      document.getElementById('mobile-navigation')?.close();
+      document.querySelector('main').innerHTML = '<p role="status">job-bless завершает работу. Эту вкладку можно закрыть.</p>';
+    } catch {
+      button.disabled = false;
+      button.textContent = 'Повторить завершение';
+    }
+  }));
+  const mobileNavigation = document.getElementById('mobile-navigation');
+  const mobileMenuToggle = document.querySelector('.mobile-menu-toggle');
+  if (mobileNavigation && mobileMenuToggle) {
+    const mobileViewport = window.matchMedia('(max-width: 760px)');
+    mobileMenuToggle.addEventListener('click', () => {
+      mobileNavigation.showModal();
+      mobileMenuToggle.setAttribute('aria-expanded', 'true');
+    });
+    mobileNavigation.addEventListener('keydown', event => {
+      if (event.key !== 'Tab') return;
+      const controls = mobileNavigation.querySelectorAll('button, a[href]');
+      const first = controls[0], last = controls[controls.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    });
+    mobileNavigation.addEventListener('click', event => {
+      if (event.target.closest('.mobile-menu-close, a')) mobileNavigation.close();
+      if (event.target === mobileNavigation) {
+        const rect = mobileNavigation.getBoundingClientRect();
+        if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) mobileNavigation.close();
+      }
+    });
+    mobileNavigation.addEventListener('close', () => {
+      mobileMenuToggle.setAttribute('aria-expanded', 'false');
+    });
+    mobileViewport.addEventListener('change', event => {
+      if (!event.matches && mobileNavigation.open) {
+        mobileNavigation.close();
+        document.querySelector('.desktop-navigation a.active')?.focus({ preventScroll: true });
+      }
+    });
+  }
   const settingsForm = document.querySelector('.settings-form');
   if (settingsForm) {
     const saveBar = settingsForm.querySelector('.settings-save-bar');
@@ -268,8 +317,9 @@
 
   connect();
 
+  document.body.addEventListener('aistudioChanged', refreshPanel);
   // Dialogs live outside the task panel so live updates preserve edits.
-  ["pipeline", "search", "apply", "score", "profile", "activity", "resume_touch"].forEach(function (kind) {
+  ["pipeline", "search", "apply", "score", "profile", "activity", "resume_touch", "llm"].forEach(function (kind) {
     const dialog = document.getElementById(kind + "-dialog");
     if (!dialog) return;
     const opener = "[data-open-" + kind + "]";
@@ -358,6 +408,14 @@
       updateSelection();
     }
   }
+  document.querySelectorAll('time[data-local-time]').forEach(function (element) {
+    const date = new Date(element.dateTime);
+    if (!Number.isNaN(date.getTime())) {
+      element.textContent = date.toLocaleString('ru-RU', {
+        day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
+      });
+    }
+  });
   setupVacancySelection();
   document.body.addEventListener("htmx:afterSwap", function (event) {
     if (event.target.id === "vacancies-page") setupVacancySelection();

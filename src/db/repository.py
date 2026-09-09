@@ -425,14 +425,14 @@ class DatabaseRepository:
     # Resumes
     # ------------------------------------------------------------------
 
-    async def upsert_resume(self, resume: Resume) -> int:
+    async def upsert_resume(self, resume: Resume, *, preserve_user_fields: bool = False) -> int:
         query = """
             INSERT INTO resumes (
                 source_url, external_id, title, full_name, city, experience_text, salary_text,
-                skills_json, summary, education_text, certificates_json, raw_text,
+                skills_json, verified_skills_json, summary, education_text, certificates_json, raw_text,
                 is_active, search_query, context_text, profile_summary, profile_model,
                 profile_hash, profile_updated_at, imported_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (source_url) DO UPDATE SET
                 external_id = excluded.external_id,
                 title = excluded.title,
@@ -441,6 +441,7 @@ class DatabaseRepository:
                 experience_text = excluded.experience_text,
                 salary_text = excluded.salary_text,
                 skills_json = excluded.skills_json,
+                verified_skills_json = excluded.verified_skills_json,
                 summary = excluded.summary,
                 education_text = excluded.education_text,
                 certificates_json = excluded.certificates_json,
@@ -454,12 +455,18 @@ class DatabaseRepository:
                 updated_at = excluded.updated_at
             RETURNING id;
         """
+        if preserve_user_fields:
+            # Do this in SQL so edits/profile builds made while HH is loading survive.
+            for field in ("search_query", "context_text", "profile_summary", "profile_model",
+                          "profile_hash", "profile_updated_at"):
+                query = query.replace(f"{field} = excluded.{field},", f"{field} = resumes.{field},")
         now = _now()
         return await self._write_returning(
             query,
             (
                 resume.source_url, resume.external_id, resume.title, resume.full_name, resume.city,
                 resume.experience_text, resume.salary_text, json.dumps(resume.skills, ensure_ascii=False),
+                json.dumps(resume.verified_skills, ensure_ascii=False),
                 resume.summary, resume.education_text,
                 json.dumps(resume.certificates, ensure_ascii=False),
                 resume.raw_text, 1 if resume.is_active else 0,
@@ -840,6 +847,7 @@ def _row_to_resume(row: Dict[str, Any]) -> Resume:
         experience_text=row.get("experience_text", ""),
         salary_text=row.get("salary_text", ""),
         skills=_load_json_list(row.get("skills_json")),
+        verified_skills=_load_json_list(row.get("verified_skills_json")),
         summary=row.get("summary", ""),
         education_text=row.get("education_text", "") or "",
         certificates=_load_json_list(row.get("certificates_json")),

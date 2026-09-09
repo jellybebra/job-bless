@@ -9,7 +9,10 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 
-from src.web.panel import panel_context
+from src.web.panel import hh_account_status, panel_context
+from src.db.models import TaskKind
+from src.web import jobs
+from src.web.tasks import TaskBusyError
 from src.web.action_settings import shared_groups
 from src.web.export import vacancy_csv
 
@@ -171,18 +174,42 @@ async def applications(
 
 
 @router.get("/resume", response_class=HTMLResponse)
-async def resume_page(request: Request) -> HTMLResponse:
+async def resume_page(request: Request, error: str = Query("")) -> HTMLResponse:
     repository = request.app.state.repository
     settings = request.app.state.settings
     resumes = await repository.list_resumes()
+    account = await hh_account_status(repository)
+    runs = await repository.list_task_runs(limit=1, kind=TaskKind.LOGIN)
+    manager = request.app.state.tasks
+    # Migrate an already logged-in installation without asking for a URL or a new login.
+    auto_key = account["confirmed_at"]
+    if (account["logged_in"] and not runs[0]["result"].get("resume_import")
+            and getattr(request.app.state, "resume_auto_key", None) != auto_key
+            and not manager.is_busy):
+        request.app.state.resume_auto_key = auto_key
+        try:
+            await manager.start(TaskKind.RESUME_IMPORT, jobs.resume_import_job, trigger="auto")
+        except TaskBusyError:
+            request.app.state.resume_auto_key = None
     return await _render(
         request,
         "resume.html",
         resumes=resumes,
+        account=account,
+        error=error,
         # Cached model list — the profile model is picked right by the button.
         models=request.app.state.llm_health.models,
         profile_model=settings.profile_config().model,
     )
+
+
+@router.get("/partials/resume-status", response_class=HTMLResponse)
+async def resume_status(request: Request) -> HTMLResponse:
+    manager = request.app.state.tasks
+    response = await _render(request, "partials/resume_status.html")
+    if not manager.is_busy:
+        response.headers["HX-Refresh"] = "true"
+    return response
 
 
 @router.get("/settings", response_class=HTMLResponse)

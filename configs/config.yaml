@@ -54,9 +54,9 @@ llm:
   standard: "openai" # openai | gemini | anthropic — выбор стандарта API
   base_url: "http://localhost:7860" # AIStudioToAPI мост
   api_key: "" # или переменная окружения LLM_API_KEY
-  model: "gemini-2.5-flash-lite"
+  model: "gemini-flash-latest"
   embedding_model: "gemini-embedding-001"
-  temperature: 0.7
+  temperature: 1.0
   max_tokens: 2048
   timeout_sec: 120
   max_retries: 3

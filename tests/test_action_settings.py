@@ -29,6 +29,7 @@ def test_shared_form_excludes_action_fields_and_preserves_their_switches(client)
             "activity.open_vacancies": "1", "schedule.activity_enabled": "1",
             "resume_touch.edit_fallback": "1", "cover_letter.enabled": "1",
             "schedule.enabled": "1", "matching.enabled": "1",
+            "llm.enabled": "1",
         })
     before = settings.all_values()
     page = client.get('/settings').text
@@ -47,6 +48,8 @@ def test_shared_form_excludes_action_fields_and_preserves_their_switches(client)
 
 
 @pytest.mark.parametrize('kind,values,expected', [
+    ('llm', {'llm.enabled': '1', 'llm.model': 'test-model', 'llm.api_key': 'test-secret'},
+     {'llm.enabled': True, 'llm.model': 'test-model', 'llm.api_key': 'test-secret'}),
     ('score', {'matching.batch_size': '7', 'matching.concurrency': '2', 'matching.prompt': 'Оценить опыт'},
      {'matching.batch_size': 7, 'matching.concurrency': 2}),
     ('profile', {'profile.model': 'profile-test', 'profile.max_chars': '7500', 'profile.timeout_sec': '200'},
@@ -89,6 +92,7 @@ def test_action_modal_persists_only_its_own_settings(client, kind, values, expec
 
 
 @pytest.mark.parametrize('kind,values', [
+    ('llm', {'llm.timeout_sec': '0', 'llm.enabled': '1'}),
     ('search', {'scroller.max_pages': '0'}),
     ('score', {'matching.batch_size': '0', 'matching.prompt': '<b>Сохранить мой текст</b>'}),
     ('profile', {'profile.max_chars': '0', 'profile.model': 'my-model'}),
@@ -134,3 +138,141 @@ def test_invalid_search_settings_do_not_change_query_or_resume_context(client):
     })
     assert 'Активное резюме изменилось' in stale.text
     assert client.app.state.settings.all_values() == before
+
+
+def test_setup_section_and_resume_selection(client):
+    repository = client.app.state.repository
+    with start_blocking_portal() as portal:
+        first = portal.call(repository.upsert_resume, Resume(
+            source_url='https://hh.ru/resume/first', title='Python developer', search_query='Python',
+        ))
+        second = portal.call(repository.upsert_resume, Resume(
+            source_url='https://hh.ru/resume/second', title='Go developer', search_query='Golang',
+        ))
+        portal.call(repository.set_active_resume, first)
+    page = client.get('/actions').text
+    setup, rest = page.split('<section class="main-actions"', 1)
+    assert 'Необходимые настройки' in setup
+    assert setup.count('data-action-id="login"') == 1
+    assert 'data-action-id="login"' not in rest
+    assert 'id="active-resume"' in setup and 'data-open-llm' in setup
+    assert f'value="{first}" selected' in setup
+    response = client.post('/actions/resume/select', data={'resume_id': second})
+    assert response.status_code == 200
+    assert f'value="{second}" selected' in response.text
+    assert 'Ищем: «Golang»' in response.text
+    with start_blocking_portal() as portal:
+        assert portal.call(repository.get_active_resume).id == second
+    missing = client.post('/actions/resume/select', data={'resume_id': second + 1})
+    assert 'Резюме не найдено' in missing.text
+    with start_blocking_portal() as portal:
+        assert portal.call(repository.get_active_resume).id == second
+
+    from src.db.models import TaskKind, TaskStatus
+    from src.web.tasks import TaskState
+    client.app.state.tasks.lane().current = TaskState(
+        id='selection-busy', kind=TaskKind.COLLECT, status=TaskStatus.RUNNING,
+    )
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    with patch.object(client.app.state.tasks.lane(), 'task', SimpleNamespace(done=lambda: False)):
+        blocked = client.post('/actions/resume/select', data={'resume_id': first})
+    assert 'Дождитесь завершения текущего действия' in blocked.text
+    assert re.search(r'<select[^>]*id="active-resume"[^>]*disabled', blocked.text)
+    with start_blocking_portal() as portal:
+        assert portal.call(repository.get_active_resume).id == second
+    client.app.state.tasks.lane().current = None
+
+
+def test_llm_modal_preserves_secret_and_invalidates_health(client):
+    from src.llm.health import LLMHealth
+
+    monitor = client.app.state.llm_health
+    client.post('/actions/llm-settings', data={'llm.api_key': 'saved-secret', 'llm.enabled': '1'})
+    monitor._health = LLMHealth(ok=True, state='ok')
+    assert monitor.cached is not None
+    response = client.post('/actions/llm-settings', data={'llm.api_key': '', 'llm.enabled': '1'})
+    assert response.headers['HX-Trigger-After-Settle'] == 'llmSettingsSaved'
+    assert client.app.state.settings.get('llm.api_key') == 'saved-secret'
+    assert monitor.cached is None
+
+
+def test_aistudio_model_settings_preserve_connection_and_unrelated_settings(client):
+    settings = client.app.state.settings
+    with start_blocking_portal() as portal:
+        portal.call(settings.save, {'llm.connection': 'aistudio', 'llm.enabled': '1'})
+    before = settings.all_values()
+    response = client.post('/actions/aistudio/settings', data={'llm.model': 'gemini-2.5-flash-lite'})
+    assert response.status_code == 200
+    assert response.headers['HX-Trigger-After-Settle'] == 'llmSettingsSaved'
+    assert settings.get('llm.model') == 'gemini-2.5-flash-lite'
+    assert settings.get('llm.connection') == 'aistudio'
+    assert settings.get('llm.enabled') is True
+    assert settings.get('matching.threshold') == before['matching.threshold']
+
+
+def test_aistudio_model_settings_are_blocked_during_running_work(client):
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    settings = client.app.state.settings
+    with start_blocking_portal() as portal:
+        portal.call(settings.save, {'llm.connection': 'aistudio', 'llm.model': 'before'})
+    with patch.object(client.app.state.tasks.lane(), 'task', SimpleNamespace(done=lambda: False)):
+        response = client.post('/actions/aistudio/settings', data={'llm.model': 'after'})
+    assert 'Дождитесь завершения текущего действия' in response.text
+    assert settings.get('llm.model') == 'before'
+
+
+def test_inline_model_selection_saves_only_model_and_renders_card(client, monkeypatch):
+    settings = client.app.state.settings
+    runtime = client.app.state.aistudio
+    with start_blocking_portal() as portal:
+        portal.call(settings.save, {
+            'llm.connection': 'aistudio', 'llm.enabled': '1', 'llm.model': 'before',
+            'llm.temperature': '1', 'llm.modifiers.search': '1',
+        })
+    runtime.state = 'ready'
+    runtime.models = ['before', 'after']
+    monkeypatch.setattr(runtime, '_read_status', lambda: {'connected': True})
+    before = settings.all_values()
+    for url in ['/actions', '/actions/aistudio/card']:
+        page = client.get(url).text
+        assert 'id="active-llm-model"' in page
+        assert 'hx-post="/actions/llm/select"' in page
+        assert 'value="before" selected' in page
+        assert 'value="after"' in page
+    response = client.post('/actions/llm/select', data={
+        'model': 'after', 'llm.temperature': '0.2', 'llm.enabled': '0',
+    })
+    assert response.status_code == 200
+    assert 'value="after" selected' in response.text
+    assert 'HX-Trigger-After-Settle' not in response.headers
+    with start_blocking_portal() as portal:
+        portal.call(settings.load)
+    assert settings.all_values() == {**before, 'llm.model': 'after'}
+
+
+@pytest.mark.parametrize('model', ['', 'unknown'])
+def test_inline_model_rejects_missing_or_unavailable_model(client, model):
+    before = client.app.state.settings.all_values()
+    response = client.post('/actions/llm/select', data={'model': model})
+    assert 'Модель недоступна' in response.text
+    assert client.app.state.settings.all_values() == before
+
+
+@pytest.mark.parametrize('lane', ['main', 'profile'])
+def test_inline_model_cannot_change_during_work(client, lane, monkeypatch):
+    from types import SimpleNamespace
+    from src.llm.health import LLMHealth
+
+    settings = client.app.state.settings
+    with start_blocking_portal() as portal:
+        portal.call(settings.save, {'llm.connection': 'custom', 'llm.enabled': '1'})
+    client.app.state.llm_health._health = LLMHealth(ok=True, state='ok', models=['after'])
+    before = settings.all_values()
+    with monkeypatch.context() as patch:
+        patch.setattr(client.app.state.tasks.lane(lane), 'task', SimpleNamespace(done=lambda: False))
+        response = client.post('/actions/llm/select', data={'model': 'after'})
+    assert 'Дождитесь завершения текущего действия' in response.text
+    assert re.search(r'<select[^>]*id="active-llm-model"[^>]*disabled', response.text)
+    assert settings.all_values() == before

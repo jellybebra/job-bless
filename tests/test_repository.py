@@ -139,10 +139,11 @@ async def test_missing_resume_columns_are_added_on_startup(tmp_path):
     conn = await init_sqlite(db_path)  # runs the migration
     async with conn.execute("PRAGMA table_info(resumes);") as cursor:
         columns = {row[1] for row in await cursor.fetchall()}
-    assert {"education_text", "certificates_json"} <= columns
+    assert {"education_text", "certificates_json", "verified_skills_json"} <= columns
 
     repo = DatabaseRepository(conn, driver="sqlite")
     assert (await repo.list_resumes())[0].title == "Инженер"  # data survived
+    assert (await repo.list_resumes())[0].verified_skills == []
     await conn.close()
 
 

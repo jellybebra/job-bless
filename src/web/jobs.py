@@ -1,6 +1,7 @@
 """Background jobs triggered from the web UI and by the scheduler."""
 
 import asyncio
+import json
 import logging
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -351,24 +352,20 @@ async def apply_job(ctx: TaskContext, vacancy_ids: Optional[Sequence[int]] = Non
     return stats
 
 
-async def resume_import_job(ctx: TaskContext, resume_url: str) -> Dict[str, Any]:
-    """Import a resume from an hh.ru link using the logged-in browser."""
+async def resume_import_job(ctx: TaskContext, resume_id: Optional[int] = None) -> Dict[str, Any]:
+    """Discover all account resumes, or re-parse one saved card."""
     await ensure_browser(ctx)
-    ctx.log(f"импортирую резюме: {resume_url}")
-    await ctx.pace()
-
     service = ResumeService(ctx.repository, ctx.settings, limiter=ctx.limiter)
-    resume = await service.import_from_url(resume_url, activate=True)
-
-    ctx.log(f"резюме сохранено: {resume.title or resume.full_name or resume.source_url}")
-    if resume.skills:
-        ctx.log(f"навыков распознано: {len(resume.skills)}")
-    return {
-        "resume_id": resume.id,
-        "title": resume.title,
-        "skills": len(resume.skills),
-        "chars": len(resume.raw_text),
-    }
+    if resume_id is not None:
+        ctx.log("заново читаю резюме с hh.ru")
+        await ctx.pace()
+        resume = await service.refresh(resume_id)
+        ctx.log(f"резюме обновлено: {resume.title}")
+        return {"resume_id": resume.id, "title": resume.title, "imported": 1, "failed": 0}
+    ctx.log("ищу все резюме в аккаунте hh.ru")
+    report = await service.import_account(checkpoint=ctx.pace, log=ctx.log, progress=ctx.progress)
+    ctx.log(f"импорт завершён: сохранено {report['imported']}, ошибок {report['failed']}")
+    return report
 
 
 async def login_job(ctx: TaskContext) -> Dict[str, Any]:
@@ -383,25 +380,24 @@ async def login_job(ctx: TaskContext) -> Dict[str, Any]:
         )
         contexts = browser.contexts
         context = contexts[0] if contexts else await browser.new_context()
+        switching = bool(ctx.state.params.get("switch_account"))
+        # Keep the working profile intact while the user signs into another account.
+        login_context = await browser.new_context() if switching else context
         # Chrome's launch arguments already open hh.ru. Reuse that tab (or an
         # existing hh.ru tab) instead of adding a second copy on every login.
-        pages = [page for page in context.pages if not page.is_closed() and page not in LIVE_PAGES]
+        pages = [page for page in login_context.pages if not page.is_closed() and page not in LIVE_PAGES]
         page = next((page for page in reversed(pages) if is_hh_url(page.url)), None)
         if page is None:
             page = next((page for page in pages if page.url in ("about:blank", "chrome://newtab/")), None)
         created_page = page is None
         if created_page:
-            page = await context.new_page()
+            page = await login_context.new_page()
         storage_path = Path(STORAGE_STATE_PATH).resolve()
         storage_path.parent.mkdir(parents=True, exist_ok=True)
         try:
             ctx.raise_if_stopped()
-            if ctx.state.params.get("switch_account"):
-                await context.clear_cookies(domain=HH_COOKIE_DOMAIN)
-                # Do not leave the previous account in the session backup if
-                # the user cancels before signing into the replacement.
-                await context.storage_state(path=str(storage_path))
-                ctx.log("сессия hh.ru сброшена — войдите в другой аккаунт")
+            if switching:
+                ctx.log("войдите в другой аккаунт в отдельном окне — прежняя сессия сохранена; «Стоп» отменит смену")
                 account = {"logged_in": False, "account_name": ""}
             else:
                 # On a fresh launch the reused tab may still be loading. The
@@ -414,19 +410,89 @@ async def login_job(ctx: TaskContext) -> Dict[str, Any]:
                 ctx.log("если статус не обновился, нажмите «Я вошёл» в интерфейсе")
                 account = await _wait_for_hh_login(ctx, page)
             ctx.raise_if_stopped()
-            await context.storage_state(path=str(storage_path))
+            if switching:
+                account = await _commit_hh_account(ctx, login_context, context, storage_path)
+            else:
+                await _save_hh_session(context, storage_path, checkpoint=ctx.raise_if_stopped)
+            # Login remains confirmed even if the subsequent resume import is stopped.
+            ctx.state.result = {"storage_state": str(storage_path), "account_verified": True, **account}
         except (Exception, asyncio.CancelledError):
             # Leave reused tabs alone, including when verification fails. A
             # successful login tab stays open for the user and the next check.
-            if created_page:
+            if created_page and not switching:
                 try:
                     await page.close()
                 except Exception:  # noqa: BLE001
                     pass
             raise
+        finally:
+            if switching:
+                try:
+                    await login_context.close()
+                except Exception:
+                    logger.warning("could not close the temporary login window")
 
     ctx.log("вход в hh.ru подтверждён" + (f": {account['account_name']}" if account["account_name"] else ""))
-    return {"storage_state": str(storage_path), **account}
+    result = dict(ctx.state.result)
+    try:
+        result["resume_import"] = await resume_import_job(ctx)
+    except Exception as error:
+        # A parsing failure must not erase an independently confirmed login.
+        ctx.log(f"Вход выполнен, но автоимпорт не завершён: {error}. Повторите на странице «Резюме».")
+        result["resume_import"] = {"error": str(error)}
+    return result
+
+
+async def _save_hh_session(context, storage_path: Path, *, checkpoint=None) -> None:
+    """Replace the saved session only after obtaining a complete new snapshot."""
+    snapshot = await context.storage_state()
+    if checkpoint:
+        checkpoint()
+    pending = storage_path.with_suffix(".pending.json")
+    try:
+        pending.write_text(json.dumps(snapshot), encoding="utf-8")
+        pending.replace(storage_path)
+    finally:
+        pending.unlink(missing_ok=True)
+
+
+async def _commit_hh_account(ctx, source, target, storage_path: Path) -> dict:
+    """Install and verify the new hh.ru cookies, rolling back on cancellation or failure."""
+    cookies = [cookie for cookie in await source.cookies() if HH_COOKIE_DOMAIN.search(cookie["domain"])]
+    if not cookies:
+        raise ValueError("Новая сессия hh.ru не найдена. Прежний аккаунт сохранён.")
+    previous = [cookie for cookie in await target.cookies() if HH_COOKIE_DOMAIN.search(cookie["domain"])]
+    verification = await target.new_page()
+    try:
+        ctx.raise_if_stopped()
+        await target.clear_cookies(domain=HH_COOKIE_DOMAIN)
+        await target.add_cookies(cookies)
+        await verification.goto("https://hh.ru/", wait_until="domcontentloaded", timeout=15000)
+        account = await read_hh_account(verification)
+        if not account["logged_in"]:
+            raise ValueError("Не удалось перенести вход в основной браузер. Прежний аккаунт сохранён.")
+        ctx.raise_if_stopped()
+        await _save_hh_session(target, storage_path, checkpoint=ctx.raise_if_stopped)
+        return account
+    except (Exception, asyncio.CancelledError):
+        async def restore():
+            await target.clear_cookies(domain=HH_COOKIE_DOMAIN)
+            await target.add_cookies(previous)
+
+        restoring = asyncio.create_task(restore())
+        try:
+            await asyncio.shield(restoring)
+        except asyncio.CancelledError:
+            await restoring
+        except Exception:
+            ctx.state.result = {"session_preserved": False}
+            ctx.log("Не удалось восстановить прежнюю сессию в Chrome. Сохранённая копия не изменена.")
+        raise
+    finally:
+        try:
+            await verification.close()
+        except Exception:
+            pass
 
 
 async def _wait_for_hh_login(ctx: TaskContext, page) -> Dict[str, Any]:

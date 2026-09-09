@@ -13,7 +13,9 @@ from src.web.app import create_app
 
 
 @pytest.fixture()
-def client(tmp_path):
+def client(tmp_path, monkeypatch):
+    # General UI tests cover a source checkout without optional bundled tools.
+    monkeypatch.setenv("JOB_BLESS_AISTUDIO_BUNDLE", str(tmp_path / "missing-bundle"))
     config = Config.load("configs/config.local.yaml")
     config.db.driver = "sqlite"
     config.db.sqlite_path = str(tmp_path / "test.db")
@@ -142,6 +144,33 @@ def test_switch_account_endpoint_passes_explicit_intent(client, monkeypatch):
     client.portal.call(wait_finished)
     assert "Другой Аккаунт" in client.get("/partials/status").text
 
+
+@pytest.mark.parametrize('status', ['running', 'cancelled', 'failed'])
+def test_isolated_account_switch_keeps_previous_account_visible(client, status):
+    from src.db.models import TaskRun, TaskStatus
+    repository = client.app.state.repository
+    previous = {'logged_in': True, 'name': 'Прежний Аккаунт', 'confirmed_at': '2026-09-08T10:00:00'}
+    client.portal.call(repository.create_task_run, TaskRun(
+        id='isolated-switch', kind=TaskKind.LOGIN,
+        params={'switch_account': True, 'previous_account': previous},
+    ))
+    if status != 'running':
+        client.portal.call(repository.finish_task_run, 'isolated-switch', TaskStatus(status))
+    panel = client.get('/partials/status').text
+    assert 'Прежний Аккаунт' in panel and 'Вы вошли в hh.ru' in panel
+    assert 'hx-confirm="Сменить аккаунт hh.ru?' in panel
+
+
+def test_stopping_import_after_verified_login_keeps_new_account(client):
+    from src.db.models import TaskRun, TaskStatus
+    repository = client.app.state.repository
+    client.portal.call(repository.create_task_run, TaskRun(
+        id='verified-switch', kind=TaskKind.LOGIN, params={'switch_account': True},
+    ))
+    client.portal.call(repository.finish_task_run, 'verified-switch', TaskStatus.CANCELLED,
+                       {'logged_in': True, 'account_name': 'Новый Аккаунт', 'account_verified': True})
+    panel = client.get('/partials/status').text
+    assert 'Новый Аккаунт' in panel and 'Вы вошли в hh.ru' in panel
 
 def test_settings_roundtrip(client):
     response = client.post(
@@ -281,6 +310,73 @@ def test_resume_import_rejects_bad_url(client):
     assert "hh.ru/resume" in (service_error or "")
 
 
+def test_resume_page_offers_account_import_in_heading(client, monkeypatch):
+    from unittest.mock import AsyncMock
+    from src.web.tasks import TaskBusyError
+
+    resume_id = client.portal.call(client.app.state.repository.upsert_resume,
+                                  Resume(source_url="https://hh.ru/resume/one", title="Engineer"))
+    page = client.get("/resume").text
+    assert 'name="resume_url"' not in page
+    assert 'Обновить все резюме' in page
+    heading = page.split('<header class="page-heading"')[1].split('</header>')[0]
+    assert 'Обновить все резюме' in heading
+    assert f'action="/actions/resume/{resume_id}/refresh"' not in page
+    start = AsyncMock()
+    monkeypatch.setattr(client.app.state.tasks, "start", start)
+    response = client.post("/actions/resume/import", follow_redirects=False)
+    assert response.status_code == 303 and response.headers['location'] == '/resume'
+    assert start.call_args.args[0] == TaskKind.RESUME_IMPORT
+    response = client.post(f"/actions/resume/{resume_id}/refresh", follow_redirects=False)
+    assert response.status_code == 303
+    assert start.call_args.kwargs['params']['resume_id'] == resume_id
+    assert client.post('/actions/resume/999/refresh').status_code == 404
+    start.side_effect = TaskBusyError('Задача выполняется')
+    assert 'Задача выполняется' in client.post('/actions/resume/import').text
+
+
+def test_resume_card_shows_confirmed_skills_without_city_salary_or_raw_text(client):
+    client.portal.call(client.app.state.repository.upsert_resume, Resume(
+        source_url='https://hh.ru/resume/verified', title='Engineer',
+        city='Legacy city', salary_text='Legacy salary', skills=['Docker', 'Python'],
+        verified_skills=['Docker'], raw_text='Private raw fallback',
+    ))
+    page = client.get('/resume').text
+    assert '✓ Docker' in page and '✓ Python' not in page
+    assert 'Подтверждено на hh.ru' in page
+    assert 'Весь распознанный текст' not in page and 'Private raw fallback' not in page
+    assert 'Legacy city' not in page and 'Legacy salary' not in page
+
+
+def test_resume_auto_import_for_existing_login_runs_once(client, monkeypatch):
+    from unittest.mock import AsyncMock
+    from src.db.models import TaskRun, TaskStatus
+
+    repo = client.app.state.repository
+    client.portal.call(repo.create_task_run, TaskRun(id='old-login', kind=TaskKind.LOGIN))
+    client.portal.call(repo.finish_task_run, 'old-login', TaskStatus.COMPLETED, {'logged_in': True}, '')
+    start = AsyncMock()
+    monkeypatch.setattr(client.app.state.tasks, 'start', start)
+    client.get('/resume')
+    client.get('/resume')
+    start.assert_awaited_once()
+    assert start.call_args.kwargs['trigger'] == 'auto'
+
+
+def test_resume_page_does_not_repeat_import_completed_during_login(client, monkeypatch):
+    from unittest.mock import AsyncMock
+    from src.db.models import TaskRun, TaskStatus
+
+    repo = client.app.state.repository
+    client.portal.call(repo.create_task_run, TaskRun(id='new-login', kind=TaskKind.LOGIN))
+    client.portal.call(repo.finish_task_run, 'new-login', TaskStatus.COMPLETED,
+                       {'logged_in': True, 'resume_import': {'found': 0, 'imported': 0}}, '')
+    start = AsyncMock()
+    monkeypatch.setattr(client.app.state.tasks, 'start', start)
+    client.get('/resume')
+    start.assert_not_awaited()
+
+
 def test_token_guard_blocks_without_token(tmp_path):
     config = Config.load("configs/config.local.yaml")
     config.db.driver = "sqlite"
@@ -358,7 +454,7 @@ def test_refreshed_lamp_does_not_retrigger_itself(client):
     assert "every 10s" in fragment
 
     # The copy embedded in a page does need the initial load.
-    assert "load, every 10s" in client.get("/settings").text
+    assert "load, every 10s" in client.get("/actions").text
 
 
 def test_compact_lamp_shows_only_model(client):
@@ -382,7 +478,7 @@ def test_compact_lamp_shows_only_model(client):
     assert "есть подключение" in full and "проверить" in full
 
 
-def test_panel_has_action_settings_buttons_and_settings_keep_health_status(client):
+def test_panel_has_action_settings_buttons_and_llm_health_status(client):
     from src.llm.health import LLMHealth
 
     monitor = client.app.state.llm_health
@@ -393,15 +489,16 @@ def test_panel_has_action_settings_buttons_and_settings_keep_health_status(clien
     assert 'aria-label="Настроить оценку вакансий"' in panel
     assert 'aria-label="Настроить описание опыта"' in panel
     assert "search-model" not in panel
-    assert "llm-status" not in panel
+    assert "llm-status ok" in panel
 
-    settings = client.get("/settings").text
+    settings = client.get("/actions/llm-settings").text
     assert 'class="llm-text"' in settings  # full lamp with the message
     assert "проверить" in settings
 
 
-def test_llm_lamp_is_on_settings(client):
-    assert "llm-status" in client.get("/settings").text
+def test_llm_settings_moved_to_actions(client):
+    assert "llm-status" in client.get("/actions").text
+    assert 'name="llm.enabled"' not in client.get("/settings").text
 
 
 def test_llm_health_is_cached(client):
@@ -498,8 +595,9 @@ def test_new_user_can_collect_but_needs_resume_for_scoring_and_applying(client):
     import re
 
     panel = client.get("/partials/status").text
-    assert 'href="/resume#resume-import">Добавить резюме</a>' in panel
-    assert panel.count('class="resume-banner"') == 1
+    assert 'href="/resume">Перейти к резюме</a>' in panel
+    assert panel.count('id="necessary-settings"') == 1
+    assert 'resume-banner' not in panel
     assert panel.count('data-action-id=') == 8
     assert "Начните с вашего резюме" not in panel
     assert 'aria-label="Настроить оценку вакансий"' in panel
@@ -521,7 +619,7 @@ def test_new_user_can_collect_but_needs_resume_for_scoring_and_applying(client):
 
 def test_settings_page_requests_model_dropdown(client):
     """Every model-typed setting asks for its own dropdown."""
-    page = client.get("/settings").text
+    page = client.get("/actions/llm-settings").text
     assert 'hx-get="/actions/llm-models?field=llm.model"' in page
     assert 'hx-get="/actions/llm-models?field=profile.model"' in client.get('/actions/profile-settings').text
     assert 'hx-get="/actions/llm-models?field=cover_letter.model"' in client.get('/actions/apply-settings').text
@@ -788,7 +886,8 @@ def test_stage_controls_moved_out_of_settings_and_tools_are_visible(client):
     assert 'Выполнить несколько действий подряд' in main
     assert 'Настроить действия' in main
     assert '<details' not in panel
-    assert 'Войти в hh.ru' in tools
+    assert 'data-action-id="login"' in main
+    assert 'data-action-id="login"' not in tools
     page = client.get('/settings').text
     assert 'id="pipeline-dialog"' not in page
     assert 'id="pipeline-dialog"' in client.get("/actions").text

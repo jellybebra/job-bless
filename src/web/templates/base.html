@@ -8,17 +8,26 @@
   <script src="/static/htmx.min.js" defer></script>
 </head>
 <body class="{{ 'with-console' if path == '/actions' }}">
+{% macro navigation_links() %}
+  {% for url, title in [('/actions', 'Действия'), ('/vacancies', 'Вакансии'), ('/applications', 'Отклики'), ('/resume', 'Резюме'), ('/runs', 'Прогоны'), ('/settings', 'Настройки')] %}
+    <a href="{{ url }}" class="{{ 'active' if path == url }}" {% if path == url %}aria-current="page"{% endif %}>{{ title }}</a>
+  {% endfor %}
+  {% if desktop_mode %}<button type="button" class="link desktop-exit" data-exit-app>Завершить работу</button>{% endif %}
+{% endmacro %}
 <header class="topbar">
+  <button type="button" class="mobile-menu-toggle" aria-label="Открыть меню" aria-controls="mobile-navigation" aria-expanded="false">
+    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+  </button>
   <a class="brand" href="/actions">job<span>-bless</span></a>
-  <nav>
-    <a href="/actions" class="{{ 'active' if path == '/actions' }}">Действия</a>
-    <a href="/vacancies" class="{{ 'active' if path == '/vacancies' }}">Вакансии</a>
-    <a href="/applications" class="{{ 'active' if path == '/applications' }}">Отклики</a>
-    <a href="/resume" class="{{ 'active' if path == '/resume' }}">Резюме</a>
-    <a href="/runs" class="{{ 'active' if path == '/runs' }}">Прогоны</a>
-    <a href="/settings" class="{{ 'active' if path == '/settings' }}">Настройки</a>
-  </nav>
+  <nav class="desktop-navigation" aria-label="Основная навигация">{{ navigation_links() }}</nav>
 </header>
+<dialog class="navigation-drawer" id="mobile-navigation" aria-labelledby="mobile-navigation-title">
+  <div class="navigation-drawer-heading">
+    <h2 id="mobile-navigation-title">Меню</h2>
+    <button type="button" class="mobile-menu-close" aria-label="Закрыть меню">{% include 'partials/close_icon.html' %}</button>
+  </div>
+  <nav aria-label="Основная навигация">{{ navigation_links() }}</nav>
+</dialog>
 
 <main>
   {% block content %}{% endblock %}

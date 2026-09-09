@@ -244,6 +244,8 @@ FIELDS: Tuple[SettingField, ...] = (
                  help="hh.ru разрешает поднимать резюме в поиске раз в 4 часа."),
 
     # --- нейросеть ---
+    SettingField("llm.connection", "Способ подключения", "choice", GROUP_LLM,
+                 lambda c: c.llm.connection, choices=("custom", "aistudio")),
     SettingField("llm.enabled", "Использовать нейросеть", "bool", GROUP_LLM, lambda c: c.llm.enabled),
     SettingField("llm.standard", "Стандарт API", "choice", GROUP_LLM,
                  lambda c: c.llm.standard, choices=("openai", "gemini", "anthropic")),
@@ -291,6 +293,9 @@ class SettingsService:
         self.config = config
         self.repository = repository
         self._values: Dict[str, Any] = {}
+        # Ephemeral endpoint/key supplied only by the owned bundled process.
+        # Custom API fields stay intact when switching to bundled AI Studio.
+        self.managed_llm = None
         # Filters other than the query live in the URL from YAML; the query now
         # belongs to a resume, and this template supplies everything else.
         self._search_url_template = config.scroller.search_url
@@ -509,9 +514,10 @@ class SettingsService:
             thinking=self.get("llm.modifiers.thinking", base.modifiers.thinking),
             search=bool(self.get("llm.modifiers.search", base.modifiers.search)),
         )
-        return replace(
+        config = replace(
             base,
             enabled=bool(self.get("llm.enabled", base.enabled)),
+            connection=self.get("llm.connection", base.connection),
             standard=self.get("llm.standard", base.standard),
             base_url=self.get("llm.base_url", base.base_url),
             api_key=self.get("llm.api_key", base.api_key),
@@ -521,6 +527,13 @@ class SettingsService:
             timeout_sec=float(self.get("llm.timeout_sec", base.timeout_sec)),
             modifiers=modifiers,
         )
+        if config.connection == "aistudio":
+            managed = self.managed_llm or {}
+            return replace(config, enabled=config.enabled and bool(managed), standard="openai",
+                           base_url=managed.get("base_url", "http://127.0.0.1:0"),
+                           api_key=managed.get("api_key", ""), timeout_sec=max(300, config.timeout_sec),
+                           max_retries=0)
+        return config
 
 
 def _coerce(setting: SettingField, raw: Any, strict: bool = False) -> Any:

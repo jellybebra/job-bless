@@ -112,12 +112,13 @@ class LLMModifiersConfig:
 @dataclass
 class LLMConfig:
     enabled: bool = False
+    connection: str = "custom"       # custom | aistudio (bundled, managed)
     standard: str = "openai"          # openai | gemini | anthropic
     base_url: str = "http://localhost:7860"
     api_key: str = ""
-    model: str = "gemini-2.5-flash-lite"
+    model: str = "gemini-flash-latest"
     embedding_model: str = "gemini-embedding-001"
-    temperature: float = 0.7
+    temperature: float = 1.0
     max_tokens: int = 2048
     timeout_sec: float = 120.0
     max_retries: int = 3
@@ -225,11 +226,12 @@ class Config:
         llm_cfg = LLMConfig(
             enabled=(os.getenv("LLM_ENABLED", str(llm_data.get("enabled", False))).lower() in ("true", "1")),
             standard=os.getenv("LLM_STANDARD", llm_data.get("standard", "openai")),
+            connection=llm_data.get("connection", "custom"),
             base_url=os.getenv("LLM_BASE_URL", llm_data.get("base_url", "http://localhost:7860")),
             api_key=os.getenv("LLM_API_KEY", llm_data.get("api_key", "")),
-            model=os.getenv("LLM_MODEL", llm_data.get("model", "gemini-2.5-flash-lite")),
+            model=os.getenv("LLM_MODEL", llm_data.get("model", "gemini-flash-latest")),
             embedding_model=os.getenv("LLM_EMBEDDING_MODEL", llm_data.get("embedding_model", "gemini-embedding-001")),
-            temperature=float(llm_data.get("temperature", 0.7)),
+            temperature=float(llm_data.get("temperature", 1.0)),
             max_tokens=int(llm_data.get("max_tokens", 2048)),
             timeout_sec=float(llm_data.get("timeout_sec", 120.0)),
             max_retries=int(llm_data.get("max_retries", 3)),

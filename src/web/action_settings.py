@@ -8,6 +8,7 @@ def _prefix(prefix):
 
 
 ACTION_SECTIONS = {
+    "llm": (("Нейросеть", _prefix("llm.")),),
     "search": (("Сбор вакансий", _prefix("scroller.")),),
     "score": (("Оценка вакансий", ("matching.batch_size", "matching.concurrency", "matching.prompt")),),
     "apply": (

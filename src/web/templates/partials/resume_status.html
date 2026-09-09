@@ -1,0 +1,19 @@
+<div id="resume-status" role="status" {% if tasks.is_busy %}hx-get="/partials/resume-status" hx-trigger="every 2s" hx-swap="outerHTML"{% endif %}>
+  {% if tasks.is_busy %}
+    <p>{{ current_task.message or 'Задача выполняется…' }}</p>
+    {% if current_task.total %}<p class="muted small">{{ current_task.done }} из {{ current_task.total }}</p>{% endif %}
+    <p class="muted small">После завершения список обновится. <a href="/actions">Журнал и остановка задачи</a></p>
+  {% elif current_task and current_task.kind.value in ('resume_import', 'login') %}
+    {% if current_task.error_message %}<p class="error" role="alert">{{ current_task.error_message }}</p>
+    {% elif current_task.status.value == 'cancelled' %}<p class="warn">Обновление остановлено. Уже прочитанные резюме сохранены.</p>
+    {% else %}
+      {% set result = current_task.result.get('resume_import', current_task.result) %}
+      {% if result.get('error') %}<p class="error" role="alert">{{ result.error }}</p>
+      {% elif 'imported' in result %}
+        {% if result.get('failed') %}<p class="warn">Не удалось прочитать: {{ result.failed }}. Повторите обновление.</p>{% endif %}
+        {% if result.get('found') == 0 %}<p class="muted">В аккаунте пока нет резюме. Создайте его на hh.ru, затем нажмите «Обновить все резюме».</p>{% endif %}
+        {% for item in result.get('errors', []) %}<p class="warn small">{{ item.error }}</p>{% endfor %}
+      {% endif %}
+    {% endif %}
+  {% endif %}
+</div>

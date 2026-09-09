@@ -1,0 +1,24 @@
+{
+  "format": 1,
+  "platform": "win-x64",
+  "aistudio_commit": "db624c24ab111ad0f50308f20f8a75a216dbf873",
+  "aistudio_version": "1.3.7",
+  "archives": {
+    "aistudio-source.zip": {
+      "url": "https://codeload.github.com/iBUHub/AIStudioToAPI/zip/db624c24ab111ad0f50308f20f8a75a216dbf873",
+      "sha256": "aa9f9a8f80bb170d796171586c4c839140b827cf48094b186cc8e38063bd9f6d"
+    },
+    "node-win64.zip": {
+      "url": "https://nodejs.org/dist/v22.18.0/node-v22.18.0-win-x64.zip",
+      "sha256": "c95d8a7e1c99e669cc08c9f1176e068c1f50847c37908fcb8c35b62482366511"
+    },
+    "camoufox-win64.zip": {
+      "url": "https://github.com/daijro/camoufox/releases/download/v135.0.1-beta.24/camoufox-135.0.1-beta.24-win.x86_64.zip",
+      "sha256": "7b8dd86d9d26fa71e7d8809e311d16223dc74bff2c7feb2a7e7f8b7e8ccdf206"
+    },
+    "python-win64.zip": {
+      "url": "https://www.python.org/ftp/python/3.13.11/python-3.13.11-embed-amd64.zip",
+      "sha256": "1ec066fb61ba5e8c73e29e048cd07c26850f74585e3a116005135b31b8004890"
+    }
+  }
+}
