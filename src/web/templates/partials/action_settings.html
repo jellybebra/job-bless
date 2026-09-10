@@ -18,8 +18,9 @@
 {% if kind is defined %}
 <form class="action-settings-form" method="post" action="/actions/{{ kind }}-settings" hx-post="/actions/{{ kind }}-settings" hx-target="#{{ kind }}-dialog-content"
       hx-swap="innerHTML" hx-disabled-elt="find button[type='submit']" hx-disinherit="hx-disabled-elt">
-  <p class="muted">Сохранение настроек не запускает действие.</p>
-  {% if kind in ('score', 'profile') %}<p class="small"><a href="/settings#f-llm.enabled">Общие настройки подключения к нейросети</a></p>{% endif %}
+  <p class="muted">{{ 'Это подключение используется для оценки вакансий, описания опыта и сопроводительных писем.' if kind == 'llm' else 'Сохранение настроек не запускает действие.' }}</p>
+  {% if kind == 'llm' %}<div class="field-status">{% with initial = true %}{% include 'partials/llm_status.html' %}{% endwith %}</div>{% endif %}
+  {% if kind in ('score', 'profile') %}<p class="small"><a href="/actions#necessary-settings">Общие настройки подключения к нейросети</a></p>{% endif %}
   <div class="error-box" id="{{ kind }}-save-error" role="alert" {{ 'hidden' if not errors }}>
     {% for error in errors %}<p>{{ error }}</p>{% endfor %}
   </div>

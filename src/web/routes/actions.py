@@ -13,7 +13,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from src.db.models import TaskKind
 from src.web import jobs
 from src.web.action_settings import ACTION_KEYS, ACTION_SECTIONS, SHARED_KEYS, action_sections, shared_groups
-from src.web.panel import PIPELINE_STAGE_KEYS, hh_login_confirmed, panel_context
+from src.web.panel import PIPELINE_STAGE_KEYS, hh_account_status, hh_login_confirmed, llm_card_context, panel_context
 from src.web.tasks import LANE_ACTIVITY, LANE_MAIN, LANE_PROFILE, TaskBusyError
 
 logger = logging.getLogger(__name__)
@@ -117,8 +117,11 @@ async def start_apply(
 
 @router.post("/login", response_class=HTMLResponse)
 async def start_login(request: Request, switch_account: bool = Form(False)) -> HTMLResponse:
+    params = {"switch_account": switch_account}
+    if switch_account:
+        params["previous_account"] = await hh_account_status(request.app.state.repository)
     return await _start(request, TaskKind.LOGIN, jobs.login_job,
-                        params={"switch_account": switch_account})
+                        params=params)
 
 
 @router.post("/activity", response_class=HTMLResponse)
@@ -149,16 +152,38 @@ async def confirm_task(request: Request, lane: str = Form(LANE_MAIN)) -> HTMLRes
 
 # --- resume -------------------------------------------------------------
 
+@router.post("/resume/select", response_class=HTMLResponse)
+async def select_resume(request: Request, resume_id: int = Form(...)) -> HTMLResponse:
+    repository = request.app.state.repository
+    if request.app.state.tasks.is_busy:
+        return await _panel(request, error="Дождитесь завершения текущего действия, чтобы выбрать резюме.")
+    if not await repository.get_resume(resume_id):
+        return await _panel(request, error="Резюме не найдено. Обновите список резюме.")
+    await repository.set_active_resume(resume_id)
+    return await _panel(request)
+
+
 @router.post("/resume/import")
-async def import_resume(request: Request, resume_url: str = Form(...)) -> RedirectResponse:
-    job = functools.partial(jobs.resume_import_job, resume_url=resume_url.strip())
+async def import_resume(request: Request) -> RedirectResponse:
+    return await _import_resumes(request)
+
+
+@router.post("/resume/{resume_id}/refresh")
+async def refresh_resume(request: Request, resume_id: int) -> RedirectResponse:
+    if not await request.app.state.repository.get_resume(resume_id):
+        raise HTTPException(404, "Резюме не найдено")
+    return await _import_resumes(request, resume_id)
+
+
+async def _import_resumes(request: Request, resume_id: Optional[int] = None) -> RedirectResponse:
+    job = functools.partial(jobs.resume_import_job, resume_id=resume_id)
     try:
         await request.app.state.tasks.start(
-            TaskKind.RESUME_IMPORT, job, params={"resume_url": resume_url.strip()}
+            TaskKind.RESUME_IMPORT, job, params={"resume_id": resume_id}
         )
     except TaskBusyError as e:
-        return RedirectResponse("/actions?" + urlencode({"error": str(e)}), status_code=303)
-    return RedirectResponse("/actions", status_code=303)
+        return RedirectResponse("/resume?" + urlencode({"error": str(e)}), status_code=303)
+    return RedirectResponse("/resume", status_code=303)
 
 
 async def _search_settings(request: Request, error: str = "", raw=None, errors=None) -> HTMLResponse:
@@ -363,16 +388,20 @@ async def action_settings(request: Request, kind: str) -> HTMLResponse:
 
 
 async def _action_settings(request: Request, kind: str, raw=None, errors=None) -> HTMLResponse:
-    if kind not in {"score", "profile", "activity", "resume_touch"}:
+    if kind not in {"score", "profile", "activity", "resume_touch", "llm"}:
         raise HTTPException(status_code=404)
-    return request.app.state.templates.TemplateResponse(request, "partials/action_settings.html", {
+    template = "partials/llm_settings.html" if kind == "llm" else "partials/action_settings.html"
+    return request.app.state.templates.TemplateResponse(request, template, {
         "kind": kind, "sections": action_sections(request.app.state.settings, kind, raw), "errors": errors or [],
+        "llm_health": request.app.state.llm_health.cached,
+        "aistudio": request.app.state.aistudio.snapshot(),
+        "external": request.query_params.get("external") == "1" or bool(raw and raw.get("llm.connection") == "custom"),
     })
 
 
 @router.post("/{kind}-settings", response_class=HTMLResponse)
 async def save_action_settings(request: Request, kind: str) -> HTMLResponse:
-    if kind not in {"score", "profile", "activity", "resume_touch"}:
+    if kind not in {"score", "profile", "activity", "resume_touch", "llm"}:
         raise HTTPException(status_code=404)
     raw = {key: str(value) for key, value in (await request.form()).multi_items()}
     errors = await request.app.state.settings.save(raw, keys=ACTION_KEYS[kind])
@@ -380,6 +409,10 @@ async def save_action_settings(request: Request, kind: str) -> HTMLResponse:
         return await _action_settings(request, kind, raw=raw, errors=errors)
     if kind in {"activity", "resume_touch"}:
         request.app.state.scheduler.reschedule()
+    if kind == "llm":
+        if not request.app.state.aistudio.selected:
+            await request.app.state.aistudio.stop()
+        request.app.state.llm_health.invalidate()
     return await _settings_saved(request, kind)
 
 
@@ -389,7 +422,10 @@ async def save_settings(request: Request) -> HTMLResponse:
     raw = {key: str(value) for key, value in form.multi_items()}
 
     settings = request.app.state.settings
-    errors = await settings.save(raw, keys=SHARED_KEYS)
+    # Accept explicit LLM fields from older clients; the shared form no longer
+    # owns them, so saving it must not reset the LLM checkbox.
+    keys = SHARED_KEYS | (ACTION_KEYS["llm"] if ACTION_KEYS["llm"] & raw.keys() else set())
+    errors = await settings.save(raw, keys=keys)
     if errors:
         return request.app.state.templates.TemplateResponse(
             request,
@@ -416,6 +452,66 @@ async def save_settings(request: Request) -> HTMLResponse:
 
 
 # --- llm connectivity ---------------------------------------------------
+
+
+@router.post("/llm/select", response_class=HTMLResponse)
+async def select_llm_model(request: Request, model: str = Form("")) -> HTMLResponse:
+    state = request.app.state
+    if state.tasks.is_busy or state.tasks.lane(LANE_PROFILE).is_busy:
+        return await _panel(request, error="Дождитесь завершения текущего действия, чтобы выбрать модель.")
+    models = state.aistudio.models if state.aistudio.selected else state.llm_health.models
+    if not model or model not in models:
+        return await _panel(request, error="Модель недоступна. Обновите список в настройках нейросети.")
+    errors = await state.settings.save({"llm.model": model}, keys={"llm.model"})
+    if errors:
+        return await _panel(request, error="; ".join(errors))
+    state.llm_health.invalidate()
+    return await _panel(request)
+
+@router.post("/aistudio/connect", response_class=HTMLResponse)
+async def connect_aistudio(request: Request, login: bool = Form(False)) -> HTMLResponse:
+    tasks = request.app.state.tasks
+    if tasks.is_busy or tasks.lane(LANE_PROFILE).is_busy:
+        return await _panel(request, error="Дождитесь завершения текущего действия перед сменой подключения.")
+    request.app.state.aistudio.begin(login=login)
+    return await _settings_saved(request, "llm")
+
+
+@router.post("/aistudio/stop", response_class=HTMLResponse)
+async def stop_aistudio(request: Request) -> HTMLResponse:
+    tasks = request.app.state.tasks
+    if tasks.is_busy or tasks.lane(LANE_PROFILE).is_busy:
+        return await _panel(request, error="Дождитесь завершения текущего действия перед остановкой нейросети.")
+    await request.app.state.aistudio.stop(disable=True)
+    return await _panel(request)
+
+
+@router.get("/aistudio/card", response_class=HTMLResponse)
+async def aistudio_card(request: Request, revision: int = -1) -> HTMLResponse:
+    runtime = request.app.state.aistudio
+    if runtime.snapshot()["external_enabled"]:
+        await request.app.state.llm_health.get()
+    response = request.app.state.templates.TemplateResponse(
+        request, "partials/llm_card.html", llm_card_context(request),
+    )
+    if revision != runtime.revision:
+        response.headers["HX-Trigger"] = "aistudioChanged"
+    return response
+
+
+@router.post("/aistudio/settings", response_class=HTMLResponse)
+async def save_aistudio_settings(request: Request) -> HTMLResponse:
+    raw = {key: str(value) for key, value in (await request.form()).multi_items()}
+    if request.app.state.aistudio.selected and (
+        request.app.state.tasks.is_busy or request.app.state.tasks.lane(LANE_PROFILE).is_busy
+    ):
+        return await _action_settings(request, "llm", raw=raw, errors=["Дождитесь завершения текущего действия перед сменой подключения."])
+    keys = {"llm.model", "llm.temperature", "llm.max_tokens", "llm.modifiers.thinking", "llm.modifiers.search"}
+    errors = await request.app.state.settings.save(raw, keys=keys)
+    if errors:
+        return await _action_settings(request, "llm", raw=raw, errors=errors)
+    request.app.state.llm_health.invalidate()
+    return await _settings_saved(request, "llm")
 
 @router.get("/llm-models", response_class=HTMLResponse)
 async def llm_models(

@@ -19,6 +19,14 @@ SECTION_HEADINGS: Dict[str, Tuple[str, ...]] = {
     "certificates": ("сертификаты", "электронные сертификаты"),
 }
 
+# Below these headings HH lists profile-completion suggestions, not resume sections.
+FOOTER_HEADINGS: Tuple[str, ...] = (
+    "завершённость резюме", "завершенность резюме",
+    "ещё вы можете добавить", "еще вы можете добавить",
+    "поднятие резюме", "видимость резюме", "подобрали для вас",
+    "похожие вакансии", "рекомендуемые вакансии", "статистика просмотров",
+)
+
 # Interface chrome and hh.ru promo blocks: they end a section and never belong
 # to its content.
 STOP_HEADINGS: Tuple[str, ...] = (
@@ -103,14 +111,18 @@ def parse_sections(raw_text: str) -> ResumeSections:
 def _section_bounds(lines: List[str]) -> Dict[str, Tuple[int, int]]:
     """Map section -> (first content line, end line, exclusive)."""
     starts: List[Tuple[int, str]] = []
+    content_end = len(lines)
     for index, line in enumerate(lines):
+        if any(line.lower().startswith(heading) for heading in FOOTER_HEADINGS):
+            content_end = index
+            break
         name = _heading_name(line)
         if name and not any(existing == name for _, existing in starts):
             starts.append((index, name))
 
     bounds: Dict[str, Tuple[int, int]] = {}
     for position, (index, name) in enumerate(starts):
-        end = starts[position + 1][0] if position + 1 < len(starts) else len(lines)
+        end = starts[position + 1][0] if position + 1 < len(starts) else content_end
         stop = _first_stop(lines, index + 1, end)
         bounds[name] = (index + 1, stop)
     return bounds

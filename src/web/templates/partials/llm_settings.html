@@ -1,0 +1,50 @@
+{% from 'partials/settings_field.html' import render_field %}
+{% set fields = sections[0][1] %}
+{% if aistudio.available and not external %}
+<section class="aistudio-connection">
+  <h3>Google AI Studio</h3>
+  {% if aistudio.selected %}
+    <p class="small" role="status">{{ aistudio.message }}</p>
+    <form hx-post="/actions/aistudio/settings" hx-target="#llm-dialog-content" hx-swap="innerHTML" class="action-settings-form">
+      {% for field in fields if field.key == 'llm.model' %}{{ render_field(field) }}{% endfor %}
+      <details class="advanced">
+        <summary>Параметры генерации</summary>
+        {% for field in fields if field.key in ('llm.temperature', 'llm.max_tokens', 'llm.modifiers.thinking', 'llm.modifiers.search') %}{{ render_field(field) }}{% endfor %}
+      </details>
+      {% if errors %}<div class="error-box" role="alert">{% for error in errors %}<p>{{ error }}</p>{% endfor %}</div>{% endif %}
+      <div class="dialog-actions"><button type="submit" class="primary">Сохранить</button></div>
+    </form>
+    <div class="action-buttons">
+      <button type="button" hx-post="/actions/aistudio/connect" hx-vals='{"login":true}' hx-target="#task-panel">Сменить аккаунт Google</button>
+    </div>
+  {% else %}
+    <button type="button" class="primary" hx-post="/actions/aistudio/connect" hx-target="#task-panel">Подключить Google AI Studio</button>
+  {% endif %}
+</section>
+{% endif %}
+{% if aistudio.selected and not external %}
+<button class="link" type="button" hx-get="/actions/llm-settings?external=1" hx-target="#llm-dialog-content">Подключить свой API-сервис</button>
+{% else %}
+<details class="custom-llm-settings" {{ 'open' if not aistudio.available or errors or external }}>
+  <summary>Подключить свой API-сервис</summary>
+  <form class="action-settings-form" method="post" action="/actions/llm-settings" hx-post="/actions/llm-settings" hx-target="#llm-dialog-content"
+        hx-swap="innerHTML" hx-disabled-elt="find button[type='submit']" hx-disinherit="hx-disabled-elt">
+    <input type="hidden" name="llm.connection" value="custom">
+    <p class="muted">Подключение используется для оценки вакансий, описания опыта и сопроводительных писем.</p>
+    {% if not aistudio.selected %}<div class="field-status">{% with initial = true %}{% include 'partials/llm_status.html' %}{% endwith %}</div>{% endif %}
+    <div class="error-box" id="llm-save-error" role="alert" {{ 'hidden' if not errors }}>{% for error in errors %}<p>{{ error }}</p>{% endfor %}</div>
+    <fieldset>
+      <legend>Подключение</legend>
+      {% for field in fields if field.key in ('llm.enabled', 'llm.standard', 'llm.base_url', 'llm.api_key', 'llm.model') %}{{ render_field(field) }}{% endfor %}
+      <details class="advanced">
+        <summary>Параметры генерации</summary>
+        {% for field in fields if field.key not in ('llm.connection', 'llm.enabled', 'llm.standard', 'llm.base_url', 'llm.api_key', 'llm.model') %}{{ render_field(field) }}{% endfor %}
+      </details>
+    </fieldset>
+    <div class="dialog-actions">
+      <button type="button" data-close-llm>Отмена</button>
+      <button type="submit" class="primary">Сохранить</button>
+    </div>
+  </form>
+</details>
+{% endif %}

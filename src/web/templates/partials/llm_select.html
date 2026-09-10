@@ -1,0 +1,9 @@
+<form class="resume-select-form model-select-form" hx-post="/actions/llm/select" hx-trigger="change" hx-target="#task-panel" hx-swap="outerHTML" hx-disabled-elt="find select">
+  <label class="small muted" for="active-llm-model">Активная модель</label>
+  <select name="model" id="active-llm-model" {{ 'disabled' if panel_llm_busy or not panel_llm_models }}>
+    {% if panel_llm_model and panel_llm_model not in panel_llm_models %}<option value="{{ panel_llm_model }}" selected>{{ panel_llm_model }}</option>{% endif %}
+    {% if not panel_llm_model %}<option value="" disabled selected>Выберите модель</option>{% endif %}
+    {% for model in panel_llm_models %}<option value="{{ model }}" {{ 'selected' if model == panel_llm_model }}>{{ model }}</option>{% endfor %}
+  </select>
+</form>
+{% if panel_llm_busy %}<p class="action-hint">Выбор доступен после завершения текущего действия.</p>{% endif %}

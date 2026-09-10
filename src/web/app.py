@@ -15,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from src.browser.session import SESSION
+from src.aistudio.runtime import AIStudioRuntime
 from src.config import Config
 from src.db.connection import init_postgres, init_sqlite
 from src.db.repository import DatabaseRepository
@@ -99,6 +100,8 @@ def create_app(config: Optional[Config] = None) -> FastAPI:
         app.state.scheduler = scheduler
         app.state.llm_health = health_monitor
         app.state.limiter = limiter
+        app.state.aistudio = AIStudioRuntime(settings, health_monitor)
+        app.state.aistudio.autostart()
 
         logger.info("web app ready at http://%s:%d", config.web.host, config.web.port)
         try:
@@ -106,6 +109,7 @@ def create_app(config: Optional[Config] = None) -> FastAPI:
         finally:
             await scheduler.stop()
             await manager.shutdown()
+            await app.state.aistudio.stop()
             await SESSION.close()  # drop the shared browser connection
             try:
                 await connection.close()

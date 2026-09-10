@@ -329,6 +329,7 @@ CREATE INDEX IF NOT EXISTS idx_task_runs_kind ON task_runs(kind, started_at);
 # Columns added after the first release. `CREATE TABLE IF NOT EXISTS` never
 # touches an existing table, so they are applied separately and idempotently.
 ADDED_COLUMNS = (
+    ("resumes", "verified_skills_json", "TEXT NOT NULL DEFAULT '[]'"),
     ("resumes", "education_text", "TEXT NOT NULL DEFAULT ''"),
     ("resumes", "certificates_json", "TEXT NOT NULL DEFAULT '[]'"),
     ("vacancy_applications", "cover_letter", "TEXT NOT NULL DEFAULT ''"),

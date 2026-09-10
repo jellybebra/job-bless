@@ -25,6 +25,7 @@
 | `errors.py` | Единая иерархия ошибок (`LLMAuthError`, `LLMRateLimitError`, …) |
 | `http.py` | HTTP-транспорт: ретраи с backoff, SSE-парсер, маппинг HTTP-статусов в ошибки |
 | `factory.py` | `create_llm_client(config.llm)` — выбор адаптера по `llm.standard` |
+| `catalog.py` | Общий фильтр моделей для текстовых задач: настройки и автоматический выбор AI Studio исключают специализированные модели по назначению и доступным метаданным |
 | `providers/openai.py` | Стандарт OpenAI: `/v1/chat/completions`, `/v1/models`, `/v1/embeddings`, `/v1/responses/input_tokens` |
 | `providers/gemini.py` | Стандарт Google: `/v1beta/models/{model}:generateContent`, `:streamGenerateContent?alt=sse`, `:embedContent`, `:batchEmbedContents` |
 | `providers/anthropic.py` | Стандарт Anthropic: `/v1/messages`, `/v1/messages/count_tokens`, `/v1/models` |
@@ -37,9 +38,9 @@ llm:
   standard: "openai"      # openai | gemini | anthropic
   base_url: "http://localhost:7860"
   api_key: ""             # или LLM_API_KEY
-  model: "gemini-2.5-flash-lite"
+  model: "gemini-flash-latest"
   embedding_model: "gemini-embedding-001"
-  temperature: 0.7
+  temperature: 1.0
   max_tokens: 2048
   timeout_sec: 120
   max_retries: 3

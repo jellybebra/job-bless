@@ -148,6 +148,41 @@ def test_missing_sections_do_not_break_the_rest():
     assert parsed.education == "" and parsed.certificates == []
 
 
+def test_profile_completion_suggestions_are_not_certificates():
+    text = """Навыки
+Python
+Docker
+О себе
+Разрабатываю сервисы.
+По-русски
+Завершённость резюме
+Ещё вы можете добавить
+Дополнительное образование
+Пройденные тесты и экзамены
+Электронные сертификаты
+Категория прав
+Наличие автомобиля
+Отчество
+Фотографию
+Портфолио
+Рекомендации
+Желаемую зарплату
+Поднятие резюме
+Сертификаты о ваших подтверждённых навыках
+Docker
+Получить на Госуслугах
+"""
+    sections = parse_sections(text)
+    assert sections.certificates == []
+    assert sections.skills == ["Python", "Docker"]
+    assert sections.summary == "Разрабатываю сервисы."
+
+
+def test_real_certificates_are_kept_before_completion_suggestions():
+    sections = parse_sections("Сертификаты\nCKA\n2025\nЕщё вы можете добавить\nЭлектронные сертификаты\nФотографию")
+    assert sections.certificates == ["CKA (2025)"]
+
+
 def test_prompt_text_carries_every_section():
     resume = Resume(
         title="Инженер по тестированию",

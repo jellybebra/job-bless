@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from typing import List, Optional
 
 from src.config import LLMConfig
+from src.llm.catalog import text_model_ids
 from src.llm.errors import (
     LLMAuthError,
     LLMBadRequestError,
@@ -42,7 +43,7 @@ class LLMHealth:
     base_url: str = ""
     latency_ms: int = 0
     models_available: int = 0
-    # Model ids reported by the endpoint — feeds the model dropdown in settings.
+    # Text-generation model ids — feeds all model dropdowns in settings.
     models: List[str] = field(default_factory=list)
     checked_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -65,7 +66,7 @@ async def check_llm(config: LLMConfig, timeout_sec: float = CHECK_TIMEOUT_SEC) -
         async with create_llm_client(probe_config) as client:
             if client.capabilities.model_listing:
                 models = await client.list_models()
-                health.models = sorted({m.id for m in models if m.id})
+                health.models = text_model_ids(models)
                 health.models_available = len(health.models)
             else:
                 await client.chat(ChatRequest.of("ping", max_tokens=1))

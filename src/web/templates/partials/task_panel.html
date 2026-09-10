@@ -35,7 +35,7 @@
     <p class="action-hint" id="{{ kind }}-context">
       {% if running %}<span class="running-label">{{ 'Останавливается…' if slot.stop_requested else 'Выполняется' }}</span>
       {% elif missing_resume %}Нужно резюме{% if missing_llm %} и нейросеть{% endif %}
-      {% elif missing_llm %}<a href="/settings#f-llm.enabled">Настройте нейросеть</a>
+      {% elif missing_llm %}<button class="link" type="button" data-open-llm hx-get="/actions/llm-settings" hx-target="#llm-dialog-content" hx-swap="innerHTML settle:0ms">Настройте нейросеть</button>
       {% elif missing_login %}<button class="link" type="button" id="activity-login-required" hx-post="/actions/login" {{ 'disabled' if tasks.is_busy }}>Нужен вход в hh.ru</button>
       {% elif missing_query %}Укажите должность в окне «Настроить поиск».
       {% elif missing_steps %}Выберите действия для запуска
@@ -62,7 +62,7 @@
       {% if running %}
         <button type="button" class="action-control is-stop" hx-post="/actions/stop" hx-vals='{{ {"lane": lane} | tojson }}' aria-label="Остановить: {{ title }}" title="{{ 'Остановить принудительно' if slot.stop_requested else 'Остановить' }}">{{ icon('stop') }}</button>
       {% elif kind == 'login' %}
-        <button type="button" class="action-control" hx-post="/actions/login" hx-vals='{{ {"switch_account": "1" if panel_hh_logged_in else "0"} | tojson }}' aria-describedby="login-context" {{ 'disabled' if blocked }}>{{ 'Сменить аккаунт' if panel_hh_logged_in else 'Войти в hh.ru' }}</button>
+        <button type="button" class="{{ 'account-switch' if panel_hh_logged_in else 'action-control' }}" hx-post="/actions/login" hx-vals='{{ {"switch_account": "1" if panel_hh_logged_in else "0"} | tojson }}' {% if panel_hh_logged_in %}hx-confirm="Сменить аккаунт hh.ru? Откроется отдельное окно входа. До завершения входа прежний аккаунт сохранится."{% endif %}aria-describedby="login-context" {{ 'disabled' if blocked }}>{{ 'Сменить аккаунт' if panel_hh_logged_in else 'Войти в hh.ru' }}</button>
       {% else %}
         <button type="button" class="action-control" hx-post="/actions/{{ 'start' if kind in ['profile', 'resume_touch'] else kind }}" {% if kind in ['profile', 'resume_touch'] %}hx-vals='{"kind":"{{ kind }}"}'{% endif %} aria-label="{{ start_label or title }}" title="{{ start_label or title }}" aria-describedby="{{ kind }}-context" {{ 'disabled' if blocked }}>{{ icon('play') }}</button>
       {% endif %}
@@ -71,19 +71,30 @@
 {%- endmacro %}
 
 <div class="action-dashboard" id="task-panel" hx-target="#task-panel" hx-swap="outerHTML">
-  {% if not panel_resume %}
-    <div class="resume-banner">
-      <span class="resume-banner-icon">{{ icon('resume') }}</span>
-      <div><h2>Резюме не добавлено</h2><p>Добавьте резюме для оценки вакансий и отправки откликов.</p></div>
-      <a class="btn" href="/resume#resume-import">Добавить резюме</a>
+  <section class="necessary-settings" id="necessary-settings" aria-labelledby="necessary-settings-title">
+    <h2 id="necessary-settings-title">Необходимые настройки</h2>
+    <div class="action-grid setup-grid">
+      {{ action_card('login', 'Аккаунт hh.ru' if panel_hh_logged_in else 'Смена аккаунта' if current_task and current_task.kind.value == 'login' and tasks.is_busy and current_task.params.get('switch_account') else 'Войти в hh.ru', '' if panel_hh_logged_in else 'Откроет Chrome. После входа статус обновится автоматически.', needs_resume=false) }}
+      <article class="action-card setup-card{{ ' is-connected' if panel_resume }}">
+        <div class="action-card-heading"><h3>Выбор резюме</h3></div>
+        <p class="action-description">Используется для оценки вакансий и отправки откликов.</p>
+        {% if panel_resumes %}
+          <form class="resume-select-form" hx-post="/actions/resume/select" hx-trigger="change" hx-disabled-elt="find select">
+            <label class="small muted" for="active-resume">Активное резюме</label>
+            <select name="resume_id" id="active-resume" {{ 'disabled' if tasks.is_busy }}>
+              {% if not panel_resume %}<option value="" disabled selected>Выберите резюме</option>{% endif %}
+              {% for resume in panel_resumes %}<option value="{{ resume.id }}" {{ 'selected' if panel_resume and resume.id == panel_resume.id }}>{{ resume.title or 'Без названия' }}</option>{% endfor %}
+            </select>
+          </form>
+          {% if tasks.is_busy %}<p class="action-hint">Выбор доступен после завершения текущего действия.</p>{% endif %}
+        {% else %}
+          <p class="action-hint">После входа в hh.ru ваши резюме появятся здесь автоматически.</p>
+        {% endif %}
+        <div class="action-card-footer"><a class="btn" href="/resume">{{ 'Мои резюме' if panel_resumes else 'Перейти к резюме' }}</a></div>
+      </article>
+      {% include 'partials/llm_card.html' %}
     </div>
-  {% else %}
-    <div class="resume-banner has-resume">
-      <span class="resume-banner-icon">{{ icon('resume') }}</span>
-      <div><p>Активное резюме</p><h2>{{ panel_resume.title or 'Без названия' }}</h2></div>
-      <a class="btn" href="/resume">Изменить</a>
-    </div>
-  {% endif %}
+  </section>
 
   <section class="main-actions" aria-labelledby="main-actions-title">
     <h2 id="main-actions-title">Основные действия</h2>
@@ -97,7 +108,6 @@
   <section class="search-tools" id="search-tools" aria-labelledby="search-tools-title">
     <h2 id="search-tools-title">Дополнительные действия</h2>
     <div class="action-grid">
-      {{ action_card('login', 'Аккаунт hh.ru' if panel_hh_logged_in else 'Смена аккаунта' if current_task and current_task.kind.value == 'login' and tasks.is_busy and current_task.params.get('switch_account') else 'Войти в hh.ru', '' if panel_hh_logged_in else 'Откроет Chrome. После входа статус обновится автоматически.', needs_resume=false) }}
       {{ action_card('resume_touch', 'Поднять резюме в поиске', 'Обновит дату публикации резюме, чтобы поднять его в поиске hh.ru.', config='resume_touch', start_label='Поднять резюме') }}
       {{ action_card('profile', 'Обновить описание опыта', 'Нейросеть заново соберёт профиль кандидата из резюме и дополнительных сведений о вашем опыте.', lane='profile', needs_llm=true, config='profile', start_label='Обновить профиль') }}
       {{ action_card('activity', 'Просматривать hh.ru в фоне', 'Будет открывать и прокручивать вакансии, имитируя обычный просмотр сайта.', lane='activity', needs_resume=false, config='activity', start_label='Начать просмотр') }}
