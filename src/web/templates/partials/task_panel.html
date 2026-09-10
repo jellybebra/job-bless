@@ -19,7 +19,8 @@
   {% set login_activity_busy = kind == 'login' and tasks.activity_busy %}
   {% set missing_query = (kind == 'collect' or (kind == 'pipeline' and panel_pipeline_collects)) and not panel_search_query.strip() %}
   {% set missing_steps = kind == 'pipeline' and not panel_pipeline_stages %}
-  {% set blocked = not running and (busy or missing_resume or missing_llm or missing_login or missing_query or missing_steps or login_activity_busy) %}
+  {% set manual_hh = panel_hh_manual and lane in ('main', 'activity') and kind != 'login' %}
+  {% set blocked = not running and (busy or missing_resume or missing_llm or missing_login or missing_query or missing_steps or login_activity_busy or manual_hh) %}
   <article class="action-card{{ ' account-card' if kind == 'login' }}{{ ' is-connected' if kind == 'login' and panel_hh_logged_in }}{{ ' is-running' if running }}{{ ' is-blocked' if blocked }}" data-action-id="{{ kind }}">
     <div class="action-card-heading">
       <h3>{{ title }}</h3>
@@ -34,6 +35,7 @@
     {% if description %}<p class="action-description">{{ description }}</p>{% endif %}
     <p class="action-hint" id="{{ kind }}-context">
       {% if running %}<span class="running-label">{{ 'Останавливается…' if slot.stop_requested else 'Выполняется' }}</span>
+      {% elif manual_hh %}Закройте окно браузера HH, чтобы продолжить.
       {% elif missing_resume %}Нужно резюме{% if missing_llm %} и нейросеть{% endif %}
       {% elif missing_llm %}<button class="link" type="button" data-open-llm hx-get="/actions/llm-settings" hx-target="#llm-dialog-content" hx-swap="innerHTML settle:0ms">Настройте нейросеть</button>
       {% elif missing_login %}<button class="link" type="button" id="activity-login-required" hx-post="/actions/login" {{ 'disabled' if tasks.is_busy }}>Нужен вход в hh.ru</button>
@@ -48,6 +50,7 @@
     </p>
     <div class="action-card-footer">
       <div class="card-settings-slot">
+      {% if kind == 'login' and panel_remote_hh %}<button type="button" class="link" data-account-screen="hh">Открыть браузер</button>{% endif %}
       {% if config == 'search' %}
         <button type="button" class="card-settings" data-open-search hx-get="/actions/search-settings" hx-target="#search-dialog-content" hx-swap="innerHTML settle:0ms" aria-label="Настроить поиск" title="Настроить поиск">{{ icon('settings') }}</button>
       {% elif config == 'apply' %}
@@ -66,6 +69,9 @@
       {% else %}
         <button type="button" class="action-control" hx-post="/actions/{{ 'start' if kind in ['profile', 'resume_touch'] else kind }}" {% if kind in ['profile', 'resume_touch'] %}hx-vals='{"kind":"{{ kind }}"}'{% endif %} aria-label="{{ start_label or title }}" title="{{ start_label or title }}" aria-describedby="{{ kind }}-context" {{ 'disabled' if blocked }}>{{ icon('play') }}</button>
       {% endif %}
+      {% if kind == 'login' and panel_hh_logged_in %}
+        <button type="button" class="account-switch" hx-post="/actions/hh/logout" hx-disabled-elt="this" aria-label="Выйти из HH.ru">Выйти</button>
+      {% endif %}
     </div>
   </article>
 {%- endmacro %}
@@ -74,7 +80,7 @@
   <section class="necessary-settings" id="necessary-settings" aria-labelledby="necessary-settings-title">
     <h2 id="necessary-settings-title">Необходимые настройки</h2>
     <div class="action-grid setup-grid">
-      {{ action_card('login', 'Аккаунт hh.ru' if panel_hh_logged_in else 'Смена аккаунта' if current_task and current_task.kind.value == 'login' and tasks.is_busy and current_task.params.get('switch_account') else 'Войти в hh.ru', '' if panel_hh_logged_in else 'Откроет Chrome. После входа статус обновится автоматически.', needs_resume=false) }}
+      {{ action_card('login', 'Аккаунт hh.ru' if panel_hh_logged_in else 'Смена аккаунта' if current_task and current_task.kind.value == 'login' and tasks.is_busy and current_task.params.get('switch_account') else 'Войти в hh.ru', '' if panel_hh_logged_in else 'Откроет браузер в этой панели. После входа статус обновится автоматически.' if panel_remote_hh else 'Откроет браузер в этой панели. После входа статус обновится автоматически.', needs_resume=false) }}
       <article class="action-card setup-card{{ ' is-connected' if panel_resume }}">
         <div class="action-card-heading"><h3>Выбор резюме</h3></div>
         <p class="action-description">Используется для оценки вакансий и отправки откликов.</p>
@@ -109,7 +115,6 @@
     <h2 id="search-tools-title">Дополнительные действия</h2>
     <div class="action-grid">
       {{ action_card('resume_touch', 'Поднять резюме в поиске', 'Обновит дату публикации резюме, чтобы поднять его в поиске hh.ru.', config='resume_touch', start_label='Поднять резюме') }}
-      {{ action_card('profile', 'Обновить описание опыта', 'Нейросеть заново соберёт профиль кандидата из резюме и дополнительных сведений о вашем опыте.', lane='profile', needs_llm=true, config='profile', start_label='Обновить профиль') }}
       {{ action_card('activity', 'Просматривать hh.ru в фоне', 'Будет открывать и прокручивать вакансии, имитируя обычный просмотр сайта.', lane='activity', needs_resume=false, config='activity', start_label='Начать просмотр') }}
     </div>
   </section>
@@ -141,7 +146,7 @@
       {% endif %}
       {% if t.awaiting_confirmation %}
         <div class="confirm-box">
-          <span>Войдите в аккаунт в открывшемся окне Chrome. Статус обновится автоматически; если этого не произошло:</span>
+          <span>Войдите в аккаунт в открывшемся окне браузера. Статус обновится автоматически; если этого не произошло:</span>
           <button type="button" hx-post="/actions/confirm" class="primary">Я вошёл</button>
         </div>
       {% endif %}

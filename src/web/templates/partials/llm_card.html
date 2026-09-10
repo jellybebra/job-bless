@@ -3,7 +3,10 @@
   <div class="action-card-heading"><h3>Нейросеть</h3></div>
   {% if aistudio.busy %}
     <p class="action-description" role="status">{{ aistudio.message }}</p>
-    {% if aistudio.state == 'login' %}<p class="action-hint">После входа подключение настроится автоматически.</p>{% endif %}
+    {% if aistudio.state == 'login' %}
+      <p class="action-hint">После входа подключение настроится автоматически.</p>
+      {% if aistudio.remote %}<button type="button" class="primary" data-account-screen="google">Открыть вход в Google</button>{% endif %}
+    {% endif %}
     <div class="action-card-footer"><button type="button" hx-post="/actions/aistudio/stop" hx-target="#task-panel">Отмена</button></div>
   {% elif aistudio.selected or aistudio.state == 'error' %}
     <p class="action-description{{ ' error' if aistudio.state == 'error' }}" role="status">{{ aistudio.message or 'Встроенное подключение готово к запуску' }}</p>
@@ -19,7 +22,7 @@
   {% else %}
     <p class="action-description">Оценивает вакансии, составляет описание опыта и сопроводительные письма.</p>
     {% if aistudio.available and not aistudio.external_enabled %}
-      <p class="action-hint">Google AI Studio уже входит в комплект. Осталось войти в аккаунт.</p>
+      <p class="action-hint">{{ 'Войдите в Google через окно в этой панели.' if aistudio.remote else 'Google AI Studio уже входит в комплект. Осталось войти в аккаунт.' }}</p>
       <div class="action-card-footer aistudio-choices">
         <button type="button" class="link" data-open-llm hx-get="/actions/llm-settings" hx-target="#llm-dialog-content" hx-swap="innerHTML settle:0ms">Настроить</button>
         <button type="button" class="primary" hx-post="/actions/aistudio/connect" hx-target="#task-panel">Подключить Google AI Studio</button>

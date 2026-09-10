@@ -28,7 +28,7 @@ class ResumeService:
         browser_config = replace(self.settings.browser_config(), close_stale_tabs=False)
         connector = BrowserConnector(browser_config, limiter=self.limiter)
         async with connector.connect() as page:
-            resume = await self.parser.parse(page, url, timeout_ms=browser_config.cdp.timeout_ms)
+            resume = await self.parser.parse(page, url, timeout_ms=browser_config.timeout_ms)
 
         resume_id = await self._save_parsed(resume)
         resume.id = resume_id
@@ -53,14 +53,14 @@ class ResumeService:
         config = replace(self.settings.browser_config(), close_stale_tabs=False)
         report = {"found": 0, "imported": 0, "failed": 0, "resume_ids": [], "errors": []}
         async with BrowserConnector(config, limiter=self.limiter).connect() as page:
-            urls = await self.parser.discover(page, config.cdp.timeout_ms, checkpoint=checkpoint)
+            urls = await self.parser.discover(page, config.timeout_ms, checkpoint=checkpoint)
             report["found"] = len(urls)
             say(f"найдено резюме в аккаунте: {len(urls)}")
             for index, url in enumerate(urls, 1):
                 if checkpoint:
                     await checkpoint()
                 try:
-                    resume = await self.parser.parse(page, url, timeout_ms=config.cdp.timeout_ms)
+                    resume = await self.parser.parse(page, url, timeout_ms=config.timeout_ms)
                     if checkpoint:
                         await checkpoint()
                     resume_id = await self._save_parsed(resume)

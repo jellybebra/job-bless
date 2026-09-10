@@ -273,10 +273,10 @@ def test_collect_needs_a_query_on_the_resume(client):
     assert "поисковый запрос" in message
 
 
-def test_profile_runs_in_its_own_lane(client):
+def test_profile_lane_remains_without_duplicate_action_card(client):
     from src.web.tasks import LANE_PROFILE
 
     assert LANE_PROFILE in client.app.state.tasks.lanes
     panel = client.get("/partials/status").text
-    assert 'data-action-id="profile"' in panel
-    assert 'hx-vals=\'{"kind":"profile"}\'' in panel
+    assert 'data-action-id="profile"' not in panel
+    assert 'hx-vals=\'{"kind":"profile"}\'' not in panel

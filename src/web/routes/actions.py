@@ -11,6 +11,7 @@ from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 
 from src.db.models import TaskKind
+from src.browser.session import SESSION
 from src.web import jobs
 from src.web.action_settings import ACTION_KEYS, ACTION_SECTIONS, SHARED_KEYS, action_sections, shared_groups
 from src.web.panel import PIPELINE_STAGE_KEYS, hh_account_status, hh_login_confirmed, llm_card_context, panel_context
@@ -66,7 +67,10 @@ async def _start(request: Request, kind: TaskKind, job, params=None, lane: str =
     except Exception as e:  # noqa: BLE001
         logger.exception("could not start task %s", kind.value)
         return await _panel(request, error=str(e))
-    return await _panel(request)
+    response = await _panel(request)
+    if kind == TaskKind.LOGIN and request.app.state.screens.enabled("hh"):
+        response.headers["HX-Trigger"] = json.dumps({"openAccountScreen": {"provider": "hh"}})
+    return response
 
 
 # --- jobs ---------------------------------------------------------------
@@ -122,6 +126,34 @@ async def start_login(request: Request, switch_account: bool = Form(False)) -> H
         params["previous_account"] = await hh_account_status(request.app.state.repository)
     return await _start(request, TaskKind.LOGIN, jobs.login_job,
                         params=params)
+
+
+@router.post("/hh/logout", response_class=HTMLResponse)
+async def logout_hh(request: Request) -> HTMLResponse:
+    state = request.app.state
+    # Match the screen-opening lock order. Neither a manual login nor a
+    # scheduled browser job can start between stopping jobs and discarding cookies.
+    async with state.screens.lock:
+        async with state.tasks._start_lock:
+            await state.screens.revoke("hh")
+            stopping = []
+            for name in (LANE_MAIN, LANE_ACTIVITY):
+                lane = state.tasks.lane(name)
+                if lane.is_busy and lane.current.kind != TaskKind.SCORE:
+                    state.tasks.request_stop(name)
+                    stopping.append(lane.task)
+            if stopping:
+                _, pending = await asyncio.wait(stopping, timeout=8)
+                if pending:
+                    return await _panel(request, error="Действия HH ещё останавливаются. Повторите выход через несколько секунд.")
+            try:
+                await SESSION.forget(state.settings.browser_config())
+            except Exception:
+                logger.exception("could not discard the HH session")
+                return await _panel(request, error="Не удалось очистить сессию HH. Дождитесь остановки браузера и повторите выход.")
+            await state.repository.save_settings({"hh.login_required": "true"})
+            state.tasks.publish({"type": "hh_logged_out"})
+    return await _panel(request)
 
 
 @router.post("/activity", response_class=HTMLResponse)
@@ -552,6 +584,11 @@ async def llm_health(request: Request, force: bool = False, compact: bool = Fals
 async def events(request: Request) -> StreamingResponse:
     manager = request.app.state.tasks
     queue = manager.subscribe()
+    auth = request.app.state.auth
+    owner = auth.session(request)
+
+    def authorized():
+        return not auth.enabled or (owner is not None and auth.session(request) is owner)
 
     async def stream():
         try:
@@ -561,6 +598,8 @@ async def events(request: Request) -> StreamingResponse:
                 for line in list(state.logs):
                     yield _sse({"type": "log", "line": line, "task": state.as_dict()})
             while True:
+                if not authorized():
+                    break
                 # An endless stream would make uvicorn hang on Ctrl+C waiting
                 # for this connection, so the server closes it itself.
                 if request.app.state.shutting_down:
@@ -573,6 +612,8 @@ async def events(request: Request) -> StreamingResponse:
                 except asyncio.TimeoutError:
                     yield ": ping\n\n"
                     continue
+                if not authorized():
+                    break
                 yield _sse(event)
         finally:
             manager.unsubscribe(queue)

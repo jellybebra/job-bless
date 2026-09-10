@@ -4,6 +4,7 @@ Everything lives in one process — the web server, the job runner that drives
 the browser, and the scheduler. Wiring happens in the lifespan handler.
 """
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -15,7 +16,11 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from src.browser.session import SESSION
+from src.browser.docker_runtime import prepare_browser, local_panel_url
 from src.aistudio.runtime import AIStudioRuntime
+from src.aistudio.remote import RemoteAIStudioRuntime
+from src.web.auth import OwnerAuth, router as auth_router
+from src.web.accounts import RemoteScreens, router as accounts_router
 from src.config import Config
 from src.db.connection import init_postgres, init_sqlite
 from src.db.repository import DatabaseRepository
@@ -32,8 +37,6 @@ BASE_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = BASE_DIR / "templates"
 STATIC_DIR = BASE_DIR / "static"
 
-COOKIE_NAME = "job_bless_token"
-
 # Hard deadline for uvicorn's graceful shutdown, in case something else stalls.
 SHUTDOWN_DEADLINE_SECONDS = 5
 
@@ -43,9 +46,14 @@ LLM_POLL_SECONDS = 10
 
 def create_app(config: Optional[Config] = None) -> FastAPI:
     config = config or Config.load()
+    auth = OwnerAuth(config.web)
+    if (config.accounts.hh_vnc_host or config.accounts.google_vnc_host) and not auth.enabled:
+        raise ValueError("Remote account screens require WEB_PASSWORD_HASH")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        SESSION.keep_alive = True
+        config.browser.storage_state_path = str(Path(config.db.sqlite_path).resolve().parent / "hh-session.json")
         if config.db.driver == "sqlite":
             connection = await init_sqlite(config.db.sqlite_path)
             repository = DatabaseRepository(connection, driver="sqlite")
@@ -54,6 +62,9 @@ def create_app(config: Optional[Config] = None) -> FastAPI:
             repository = DatabaseRepository(connection, driver="postgres")
 
         await repository.fail_stale_task_runs()
+        if config.accounts.hh_vnc_host and not Path(config.browser.storage_state_path).is_file():
+            # An old Chrome login record cannot authenticate a new Camoufox context.
+            await repository.save_settings({"hh.login_required": "true"})
 
         settings = SettingsService(config, repository)
         await settings.load()
@@ -100,7 +111,11 @@ def create_app(config: Optional[Config] = None) -> FastAPI:
         app.state.scheduler = scheduler
         app.state.llm_health = health_monitor
         app.state.limiter = limiter
-        app.state.aistudio = AIStudioRuntime(settings, health_monitor)
+        runtime_class = RemoteAIStudioRuntime if config.accounts.google_url else AIStudioRuntime
+        app.state.aistudio = runtime_class(settings, health_monitor)
+        app.state.screens = RemoteScreens(config.accounts)
+        manager.manual_hh = lambda: app.state.screens.active("hh")
+        manager.connection_busy = lambda: app.state.aistudio.busy
         app.state.aistudio.autostart()
 
         logger.info("web app ready at http://%s:%d", config.web.host, config.web.port)
@@ -108,19 +123,26 @@ def create_app(config: Optional[Config] = None) -> FastAPI:
             yield
         finally:
             await scheduler.stop()
+            await app.state.screens.close()
             await manager.shutdown()
             await app.state.aistudio.stop()
-            await SESSION.close()  # drop the shared browser connection
+            try:
+                await SESSION.close()
+            except Exception:
+                logger.exception("Не удалось сохранить сессию HH при остановке")
             try:
                 await connection.close()
             except Exception as e:  # noqa: BLE001
                 logger.warning("error closing db connection: %s", e)
 
-    app = FastAPI(title="job-bless", lifespan=lifespan, docs_url=None, redoc_url=None)
+    app = FastAPI(title="job-bless", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+    app.state.auth = auth
     # Flipped by the signal handler (see `serve`) so open SSE streams end
     # themselves — otherwise uvicorn waits for them forever on Ctrl+C.
     app.state.shutting_down = False
     app.mount("/static", RevalidatedStaticFiles(directory=str(STATIC_DIR)), name="static")
+    if config.accounts.hh_vnc_host or config.accounts.google_vnc_host:
+        app.mount("/remote-static", StaticFiles(directory=config.accounts.novnc_path), name="remote-static")
 
     templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
     templates.env.filters["score_class"] = _score_class
@@ -130,13 +152,18 @@ def create_app(config: Optional[Config] = None) -> FastAPI:
     templates.env.globals["poll_seconds"] = LLM_POLL_SECONDS
     app.state.templates = templates
 
-    if config.web.token:
-        _install_token_guard(app, config.web.token)
+    app.middleware("http")(auth.guard)
 
     from src.web.routes import actions, pages  # imported here to avoid a cycle
 
     app.include_router(pages.router)
     app.include_router(actions.router)
+    app.include_router(auth_router)
+    app.include_router(accounts_router)
+
+    @app.get("/healthz")
+    async def healthz():
+        return {"service": "job-bless", "status": "ok", "instance": getattr(config.app, "instance_id", "")}
 
     @app.exception_handler(404)
     async def not_found(request: Request, exc):  # noqa: ANN001
@@ -155,7 +182,15 @@ async def serve(config: Optional[Config] = None) -> None:
     import uvicorn
 
     config = config or Config.load()
-    app = create_app(config)
+    runtime = await asyncio.to_thread(prepare_browser, config)
+    if runtime:
+        logger.info("Откройте панель по личной ссылке: %s", local_panel_url(config))
+    try:
+        app = create_app(config)
+    except BaseException:
+        if runtime:
+            await asyncio.to_thread(runtime.stop)
+        raise
 
     class GracefulServer(uvicorn.Server):
         def handle_exit(self, sig, frame):  # noqa: ANN001
@@ -171,26 +206,11 @@ async def serve(config: Optional[Config] = None) -> None:
             timeout_graceful_shutdown=SHUTDOWN_DEADLINE_SECONDS,
         )
     )
-    await server.serve()
-
-
-def _install_token_guard(app: FastAPI, token: str) -> None:
-    """Minimal shared-secret guard for when the UI is not on localhost."""
-
-    @app.middleware("http")
-    async def token_middleware(request: Request, call_next):  # noqa: ANN001
-        if request.url.path.startswith("/static"):
-            return await call_next(request)
-
-        provided = request.query_params.get("token") or request.cookies.get(COOKIE_NAME)
-        if provided != token:
-            return JSONResponse({"detail": "Требуется корректный token"}, status_code=401)
-
-        if request.query_params.get("token") and not request.cookies.get(COOKIE_NAME):
-            response = RedirectResponse(request.url.path, status_code=303)
-            response.set_cookie(COOKIE_NAME, token, httponly=True, samesite="lax")
-            return response
-        return await call_next(request)
+    try:
+        await server.serve()
+    finally:
+        if runtime:
+            await asyncio.to_thread(runtime.stop)
 
 
 class RevalidatedStaticFiles(StaticFiles):

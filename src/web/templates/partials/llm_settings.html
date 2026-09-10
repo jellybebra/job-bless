@@ -1,5 +1,8 @@
 {% from 'partials/settings_field.html' import render_field %}
 {% set fields = sections[0][1] %}
+{% if errors and aistudio.selected and not aistudio.available and not external %}
+  <div class="error-box" role="alert">{% for error in errors %}<p>{{ error }}</p>{% endfor %}</div>
+{% endif %}
 {% if aistudio.available and not external %}
 <section class="aistudio-connection">
   <h3>Google AI Studio</h3>

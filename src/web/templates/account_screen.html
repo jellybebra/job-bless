@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ request.state.csrf_token }}">
+  <title>Вход в {{ title }} — job-bless</title>
+  <link rel="stylesheet" href="/static/app.css?v={{ static_version }}">
+</head>
+<body class="account-screen-page" data-provider="{{ provider }}">
+  <header class="account-screen-toolbar">
+    <div><strong>{{ title }}</strong><p id="screen-status" role="status">Открываем браузер…</p></div>
+    <div class="screen-buttons">
+      <button type="button" id="screen-paste" disabled>Вставить из буфера</button>
+      <button type="button" id="screen-keyboard">Клавиатура</button>
+      <button type="button" id="screen-zoom" aria-pressed="false">Крупнее</button>
+      <button type="button" id="screen-reconnect">Подключиться снова</button>
+      <button type="button" id="screen-close">Закрыть</button>
+    </div>
+  </header>
+  <p class="account-screen-hint">Введите данные на странице {{ 'HH' if provider == 'hh' else 'Google' }}.
+    {% if provider == 'hh' %}Пока окно открыто, автоматические действия HH остановлены.{% else %}После входа подключение проверится автоматически.{% endif %}</p>
+  <div id="remote-screen" aria-label="Браузер {{ title }}"></div>
+  <textarea id="remote-keyboard" aria-label="Клавиатура удалённого браузера" autocapitalize="off" autocomplete="off" spellcheck="false"></textarea>
+  <dialog id="screen-paste-dialog" class="pipeline-dialog" aria-labelledby="screen-paste-title">
+    <h2 id="screen-paste-title">Вставить из буфера</h2>
+    <form id="screen-paste-form" autocomplete="off">
+      <p>Текст попадёт в выбранное поле браузера. Вставьте его сюда через Ctrl+V или команду «Вставить» на телефоне.</p>
+      <label for="screen-paste-text">Текст из буфера</label>
+      <input id="screen-paste-text" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+      <p id="screen-paste-error" role="alert"></p>
+      <div class="dialog-actions">
+        <button type="button" id="screen-paste-cancel">Отмена</button>
+        <button type="submit">Вставить</button>
+      </div>
+    </form>
+  </dialog>
+  <script type="module" src="/static/account-screen.js?v={{ static_version }}"></script>
+</body>
+</html>

@@ -1,5 +1,6 @@
 import os
 import yaml
+from pathlib import Path
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional
 
@@ -17,42 +18,12 @@ class LogConfig:
 
 
 @dataclass
-class LocalProcessConfig:
-    command: str = "chrome"
-    args: List[str] = field(default_factory=lambda: [
-        "--remote-debugging-port=9222",
-        "--user-data-dir=./data/browser-profile",
-        "--new-window",
-        "--start-maximized",
-        "--no-first-run",
-        "--no-default-browser-check",
-        "https://hh.ru"
-    ])
-
-
-@dataclass
-class CDPConfig:
-    endpoint: str = "http://localhost:9222"
-    timeout_ms: int = 30000
-
-
-@dataclass
-class PlaywrightConfig:
-    endpoint: str = "ws://localhost:3000"
-    browser_type: str = "chromium"
-    timeout_ms: int = 30000
-
-
-@dataclass
 class BrowserConfig:
-    provider: str = "local_process"  # local_process | docker | external
-    transport: str = "cdp"           # cdp | playwright
-    headless: bool = False
-    # Close tabs left over from previous runs before starting a new one.
+    # Empty endpoint: the native app manages its own Docker container.
+    endpoint: str = ""
+    timeout_ms: int = 30000
+    storage_state_path: str = "./data/hh-session.json"
     close_stale_tabs: bool = True
-    local_process: LocalProcessConfig = field(default_factory=LocalProcessConfig)
-    cdp: CDPConfig = field(default_factory=CDPConfig)
-    playwright: PlaywrightConfig = field(default_factory=PlaywrightConfig)
 
 
 @dataclass
@@ -97,6 +68,22 @@ class WebConfig:
     # Empty token = no auth (the default for a local run on 127.0.0.1).
     token: str = ""
     reload: bool = False
+    password_hash: str = ""
+    require_auth: bool = False
+    public_url: str = ""
+    secure_cookies: bool = False
+
+
+@dataclass
+class RemoteAccountsConfig:
+    # Private container endpoints. Never sent to the user's browser.
+    hh_vnc_host: str = ""
+    hh_vnc_port: int = 5900
+    google_url: str = ""
+    google_key: str = ""
+    google_vnc_host: str = ""
+    google_vnc_port: int = 5900
+    novnc_path: str = "vendor/novnc"
 
 
 @dataclass
@@ -145,6 +132,7 @@ class Config:
     llm: LLMConfig = field(default_factory=LLMConfig)
     web: WebConfig = field(default_factory=WebConfig)
     applier: ApplierConfig = field(default_factory=ApplierConfig)
+    accounts: RemoteAccountsConfig = field(default_factory=RemoteAccountsConfig)
 
     @classmethod
     def load(cls, config_path: Optional[str] = None) -> "Config":
@@ -171,28 +159,10 @@ class Config:
         )
 
         b_data = data.get("browser", {})
-        lp_data = b_data.get("local_process", {})
-        cdp_data = b_data.get("cdp", {})
-        pw_data = b_data.get("playwright", {})
-
         browser_cfg = BrowserConfig(
-            provider=os.getenv("BROWSER_PROVIDER", b_data.get("provider", "local_process")),
-            transport=b_data.get("transport", "cdp"),
-            headless=(os.getenv("BROWSER_HEADLESS", str(b_data.get("headless", False))).lower() in ("true", "1")),
+            endpoint=os.getenv("HH_BROWSER_ENDPOINT", b_data.get("endpoint", "")),
+            timeout_ms=int(b_data.get("timeout_ms", 30000)),
             close_stale_tabs=bool(b_data.get("close_stale_tabs", True)),
-            local_process=LocalProcessConfig(
-                command=lp_data.get("command", "chrome"),
-                args=lp_data.get("args", LocalProcessConfig().args),
-            ),
-            cdp=CDPConfig(
-                endpoint=cdp_data.get("endpoint", "http://localhost:9222"),
-                timeout_ms=cdp_data.get("timeout_ms", 30000),
-            ),
-            playwright=PlaywrightConfig(
-                endpoint=pw_data.get("endpoint", "ws://localhost:3000"),
-                browser_type=pw_data.get("browser_type", "chromium"),
-                timeout_ms=pw_data.get("timeout_ms", 30000),
-            ),
         )
 
         db_data = data.get("postgres", {})
@@ -206,6 +176,8 @@ class Config:
             dbname=os.getenv("POSTGRES_DB", db_data.get("dbname", "job_bless_db")),
             sslmode=os.getenv("POSTGRES_SSLMODE", db_data.get("sslmode", "disable")),
         )
+
+        browser_cfg.storage_state_path = str(Path(db_cfg.sqlite_path).resolve().parent / "hh-session.json")
 
         s_data = data.get("hh_autoscroller", {})
         scroller_cfg = ScrollerConfig(
@@ -253,6 +225,20 @@ class Config:
             port=int(os.getenv("WEB_PORT", web_data.get("port", 8080))),
             token=os.getenv("WEB_TOKEN", web_data.get("token", "")),
             reload=bool(web_data.get("reload", False)),
+            password_hash=os.getenv("WEB_PASSWORD_HASH", web_data.get("password_hash", "")),
+            require_auth=os.getenv("WEB_REQUIRE_AUTH", str(web_data.get("require_auth", False))).lower() in ("true", "1"),
+            public_url=os.getenv("WEB_PUBLIC_URL", web_data.get("public_url", "")).rstrip("/"),
+            secure_cookies=os.getenv("WEB_SECURE_COOKIES", str(web_data.get("secure_cookies", False))).lower() in ("true", "1"),
+        )
+
+        accounts_cfg = RemoteAccountsConfig(
+            hh_vnc_host=os.getenv("HH_VNC_HOST", ""),
+            hh_vnc_port=int(os.getenv("HH_VNC_PORT", 5900)),
+            google_url=os.getenv("AISTUDIO_SERVICE_URL", "").rstrip("/"),
+            google_key=os.getenv("AISTUDIO_SERVICE_KEY", ""),
+            google_vnc_host=os.getenv("GOOGLE_VNC_HOST", ""),
+            google_vnc_port=int(os.getenv("GOOGLE_VNC_PORT", 5900)),
+            novnc_path=os.getenv("NOVNC_PATH", "vendor/novnc"),
         )
 
         applier_data = data.get("applier", {})
@@ -270,4 +256,5 @@ class Config:
             llm=llm_cfg,
             applier=applier_cfg,
             web=web_cfg,
+            accounts=accounts_cfg,
         )

@@ -30,6 +30,7 @@
   </form>
   {% if rows %}
   <form method="post" action="/actions/apply" id="vacancy-selection">
+    {% include 'partials/csrf_input.html' %}
     <input type="hidden" name="return_to" value="actions">
     <div class="vacancy-selection-bar">
       <label><input type="checkbox" id="check-all" {{ 'disabled' if not selectable }}>Все на странице</label>

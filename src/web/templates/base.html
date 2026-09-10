@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ request.state.csrf_token | default('') }}">
   <title>{% block title %}job-bless{% endblock %}</title>
   <link rel="stylesheet" href="/static/app.css?v={{ static_version }}">
   <script src="/static/htmx.min.js" defer></script>
@@ -13,6 +14,7 @@
     <a href="{{ url }}" class="{{ 'active' if path == url }}" {% if path == url %}aria-current="page"{% endif %}>{{ title }}</a>
   {% endfor %}
   {% if desktop_mode %}<button type="button" class="link desktop-exit" data-exit-app>Завершить работу</button>{% endif %}
+  {% if request.app.state.auth.enabled %}<form method="post" action="/logout" class="owner-logout">{% include 'partials/csrf_input.html' %}<button type="submit" class="link">Выйти</button></form>{% endif %}
 {% endmacro %}
 <header class="topbar">
   <button type="button" class="mobile-menu-toggle" aria-label="Открыть меню" aria-controls="mobile-navigation" aria-expanded="false">
@@ -51,5 +53,9 @@
 {% endif %}
 
 <script src="/static/app.js?v={{ static_version }}" defer></script>
+<dialog class="account-screen-dialog" id="account-screen-dialog" aria-label="Вход в аккаунт">
+  <button type="button" class="screen-dialog-close" id="account-screen-dismiss" aria-label="Закрыть окно входа">×</button>
+  <iframe id="account-screen-frame" title="Браузер для входа в аккаунт"></iframe>
+</dialog>
 </body>
 </html>

@@ -7,32 +7,10 @@ log:
   encoding: "json"
 
 browser:
-  provider: "local_process" # local_process | docker | external
-  transport: "cdp" # playwright | cdp
-  headless: false # false = видимое окно браузера, true = фоновый режим
-
-  local_process:
-    command: "chrome"
-    args:
-      - "--remote-debugging-port=9222"
-      - "--user-data-dir=./data/browser-profile"
-      - "--new-window"
-      - "--start-maximized"
-      - "https://hh.ru"
-
-  docker:
-    image: "browser-image:latest"
-    container_name: "career-browser"
-
-  external:
-    enabled: false
-
-  playwright:
-    endpoint: "ws://localhost:3000"
-    browser_type: "chromium"
-
-  cdp:
-    endpoint: "http://localhost:9222"
+  # Empty endpoint starts the managed Docker / Camoufox container.
+  endpoint: ""
+  timeout_ms: 30000
+  close_stale_tabs: true
 
 postgres:
   driver: "sqlite" # postgres | sqlite

@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from playwright.async_api import Browser, BrowserContext, Page
 
 from src.browser.session import SESSION
+from src.browser.intervention import HHInterventionRequired, intervention_message
 from src.config import BrowserConfig
 
 logger = logging.getLogger(__name__)
@@ -99,13 +100,16 @@ class BrowserConnector:
             self._browser, context = await SESSION.acquire(self.config)
             self._holds_session = True
 
-            # The new tab is opened first: closing every page would make Chrome
-            # itself exit, and the browser must stay alive between jobs.
+            # Register the new tab before cleanup so concurrent lanes can see it.
             self._created_page = await context.new_page()
             LIVE_PAGES.add(self._created_page)
             await self._close_stale_tabs(context)
             await self._install_throttle(self._created_page)
             yield self._created_page
+            if not self._created_page.is_closed():
+                message = intervention_message(self._created_page.url)
+                if message:
+                    raise HHInterventionRequired(message)
 
         except Exception as e:
             logger.error(f"Error during browser connection: {e}")
@@ -122,7 +126,11 @@ class BrowserConnector:
             try:
                 if not self._created_page.is_closed():
                     logger.info("Closing created page tab...")
-                    await self._created_page.close()
+                    if intervention_message(self._created_page.url):
+                        # Keep the actual challenge for the owner's remote screen.
+                        await self._created_page.unroute_all(behavior="ignoreErrors")
+                    else:
+                        await self._created_page.close()
             except (Exception, asyncio.CancelledError) as e:
                 logger.warning(f"Error while closing page tab: {e}")
             self._created_page = None

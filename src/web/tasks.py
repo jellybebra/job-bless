@@ -180,6 +180,9 @@ class TaskManager:
         self.lanes: Dict[str, Lane] = {name: Lane(name) for name in LANES}
         self.history: List[TaskState] = []
         self._subscribers: Set[asyncio.Queue] = set()
+        self._start_lock = asyncio.Lock()
+        self.manual_hh = lambda: False
+        self.connection_busy = lambda: False
 
     # --- lane access ------------------------------------------------------
 
@@ -237,6 +240,20 @@ class TaskManager:
         trigger: str = "manual",
         lane: str = LANE_MAIN,
     ) -> TaskState:
+        async with self._start_lock:
+            return await self._start(kind, job, params=params, trigger=trigger, lane=lane)
+
+    async def _start(self, kind, job, *, params, trigger, lane):
+        if kind not in (TaskKind.LOGIN, TaskKind.SCORE, TaskKind.PROFILE):
+            saved = await self.repository.get_all_settings()
+            if saved.get("hh.login_required") == "true":
+                raise TaskBusyError("Откройте браузер HH в карточке аккаунта и подтвердите вход.")
+        if self.manual_hh() and lane in (LANE_MAIN, LANE_ACTIVITY) and kind != TaskKind.LOGIN:
+            raise TaskBusyError("Закройте окно браузера HH, чтобы продолжить автоматические действия.")
+        needs_llm = (kind in (TaskKind.SCORE, TaskKind.APPLY, TaskKind.PROFILE)
+                     or (params or {}).get("action") == "pipeline")
+        if needs_llm and self.connection_busy():
+            raise TaskBusyError("Дождитесь завершения подключения Google AI Studio.")
         # Login changes cookies shared by every browser lane. This also covers
         # scheduled activity, which bypasses the HTTP action guards.
         activity = self.lane(LANE_ACTIVITY).current
@@ -277,6 +294,12 @@ class TaskManager:
             state.error_message = "остановлено пользователем"
             context.log("задача остановлена")
         except Exception as e:  # noqa: BLE001 - surfaced to the UI
+            from src.browser.intervention import HHInterventionRequired
+            if isinstance(e, HHInterventionRequired):
+                await self.repository.save_settings({"hh.login_required": "true"})
+                for name in (LANE_MAIN, LANE_ACTIVITY):
+                    if name != lane.name:
+                        self.request_stop(name)
             state.status = TaskStatus.FAILED
             state.error_message = str(e)
             logger.exception("task %s failed", state.kind.value)

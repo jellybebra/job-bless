@@ -8,7 +8,7 @@
   'Отбор вакансий': 'Общий порог для оценки и отправки откликов',
   'Ограничение нагрузки': 'Паузы между запросами и лимиты обращений к hh.ru',
   'Нейросеть': 'Подключение, модель и параметры запросов',
-  'Браузер': 'Запуск Chrome и сохранение сессии'
+  'Браузер': 'Сессия HH и вкладки браузера'
 } %}
 <section class="settings-page">
   <header class="page-heading">
@@ -24,6 +24,7 @@
   {% endif %}
 
   <form method="post" action="/actions/settings" class="settings-form">
+    {% include 'partials/csrf_input.html' %}
     {% for group, fields in groups %}
       <details class="settings-section">
         <summary>

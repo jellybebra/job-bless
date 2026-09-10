@@ -86,7 +86,7 @@ class ActivityScroller:
                 await self.limiter.acquire(should_stop=stop)
             say(f"открываю {self.config.url}")
             await page.goto(self.config.url, wait_until="domcontentloaded",
-                            timeout=browser_config.cdp.timeout_ms)
+                            timeout=browser_config.timeout_ms)
 
             started = time.monotonic()
             while time.monotonic() < deadline:

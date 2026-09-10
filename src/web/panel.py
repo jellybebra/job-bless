@@ -21,6 +21,9 @@ def llm_card_context(request: Request) -> dict:
 
 
 async def hh_account_status(repository) -> dict:
+    settings = await repository.get_all_settings()
+    if settings.get("hh.login_required") == "true":
+        return {"logged_in": False, "name": "", "confirmed_at": None}
     runs = await repository.list_task_runs(limit=1, kind=TaskKind.LOGIN)
     result = runs[0]["result"] if runs else {}
     confirmed = bool(runs and result.get("logged_in") is True and (
@@ -62,6 +65,8 @@ async def panel_context(request: Request) -> dict:
         "panel_pipeline_needs_resume": any(stage != "поиск вакансий" for stage in stages),
         "panel_hh_logged_in": account["logged_in"],
         "panel_hh_account": account,
+        "panel_remote_hh": request.app.state.screens.enabled("hh"),
+        "panel_hh_manual": request.app.state.screens.active("hh"),
         "panel_llm_enabled": bool(settings.get("llm.enabled", False)) and (
             not aistudio["selected"] or aistudio["state"] == "ready"),
         "panel_threshold": int(settings.get("matching.threshold", 70)),

@@ -28,9 +28,9 @@ def free_port():
 def open_when_ready(url, identity_url, token):
     for _ in range(120):
         try:
-            request = urllib.request.Request(identity_url, headers={"Cookie": "job_bless_token=" + token})
+            request = urllib.request.Request(identity_url)
             with urllib.request.urlopen(request, timeout=1) as response:
-                if response.status == 200:
+                if response.status == 200 and json.load(response).get("instance") == token:
                     webbrowser.open(url)
                     return
         except Exception:
@@ -55,15 +55,16 @@ def main():
         for _ in range(40):
             try:
                 identity = json.loads(instance_file.read_text(encoding="utf-8"))
-                request = urllib.request.Request(identity["identity_url"], headers={"Cookie": "job_bless_token=" + identity["token"]})
+                request = urllib.request.Request(identity["identity_url"])
                 with urllib.request.urlopen(request, timeout=1) as response:
-                    if response.status == 200:
+                    if response.status == 200 and json.load(response).get("instance") == identity["token"]:
                         webbrowser.open(identity["url"])
                         return
             except Exception:
                 time.sleep(.25)
         ctypes.windll.user32.MessageBoxW(None, "job-bless уже запускается. Попробуйте открыть его через несколько секунд.", "job-bless", 0)
         return
+    runtime = None
     try:
         os.chdir(data_root)
         (data_root / "data").mkdir(exist_ok=True)
@@ -71,6 +72,7 @@ def main():
         os.environ["JOB_BLESS_AISTUDIO_BUNDLE"] = str(APP / "vendor/aistudio")
         logging.basicConfig(filename=str(data_root / "job-bless.log"), level=logging.INFO,
                             format="%(asctime)s %(levelname)s %(name)s: %(message)s", encoding="utf-8")
+        from src.browser.docker_runtime import prepare_browser, local_panel_url
         from src.config import Config
         from src.web.app import create_app
         import uvicorn
@@ -81,16 +83,12 @@ def main():
         config.web.host = "0.0.0.0"
         config.web.port = free_port()
         config.web.token = secrets.token_urlsafe(32)
-        cdp_port = free_port()
-        config.browser.cdp.endpoint = f"http://127.0.0.1:{cdp_port}"
-        config.browser.local_process.args = [
-            f"--remote-debugging-port={cdp_port}", f"--user-data-dir={data_root / 'data/browser-profile'}",
-            "--new-window", "--start-maximized", "--no-first-run", "--no-default-browser-check", "https://hh.ru",
-        ]
+        runtime = prepare_browser(config)
         base_url = f"http://127.0.0.1:{config.web.port}"
-        url = f"{base_url}/actions?token={config.web.token}"
-        identity_url = f"{base_url}/desktop/identity"
-        instance_file.write_text(json.dumps({"url": url, "identity_url": identity_url, "token": config.web.token}), encoding="utf-8")
+        url = local_panel_url(config)
+        config.app.instance_id = secrets.token_urlsafe(16)
+        identity_url = f"{base_url}/healthz"
+        instance_file.write_text(json.dumps({"url": url, "identity_url": identity_url, "token": config.app.instance_id}), encoding="utf-8")
         app = create_app(config)
         server = uvicorn.Server(uvicorn.Config(app, host=config.web.host, port=config.web.port, log_config=None,
                                              timeout_graceful_shutdown=5))
@@ -106,9 +104,11 @@ def main():
             return {"stopping": True}
 
         app.state.templates.env.globals["desktop_mode"] = True
-        threading.Thread(target=open_when_ready, args=(url, identity_url, config.web.token), daemon=True).start()
+        threading.Thread(target=open_when_ready, args=(url, identity_url, config.app.instance_id), daemon=True).start()
         asyncio.run(server.serve())
     finally:
+        if runtime:
+            runtime.stop()
         instance_file.unlink(missing_ok=True)
         kernel.CloseHandle(mutex)
 

@@ -6,6 +6,7 @@
 <header class="page-heading" id="resume-import">
   <div><h1>Резюме <span class="muted">{{ resumes | length }}</span></h1><p class="muted">Ваш опыт и предпочтения для поиска подходящих вакансий.</p></div>
   <form method="post" action="/actions/resume/import">
+    {% include 'partials/csrf_input.html' %}
     <button type="submit" {{ 'disabled' if tasks.is_busy }}>Обновить все резюме</button>
   </form>
 </header>
@@ -32,8 +33,10 @@
     <details class="resume-card {{ 'active' if resume.is_active }}" aria-labelledby="resume-title-{{ resume.id }}">
       <summary class="resume-head">
         <span class="resume-summary-title">
-          <span class="resume-title" id="resume-title-{{ resume.id }}">{{ resume.title or resume.full_name or 'Без названия' }}</span>
-          {% if resume.is_active %}<span class="badge completed">Активное резюме</span>{% endif %}
+          <span class="resume-title-row">
+            <span class="resume-title" id="resume-title-{{ resume.id }}">{{ resume.title or resume.full_name or 'Без названия' }}</span>
+            {% if resume.is_active %}<span class="badge completed">Активное резюме</span>{% endif %}
+          </span>
           <span class="resume-summary-meta muted">Обновлено: <time datetime="{{ resume.updated_at.isoformat() }}" data-local-time>{{ resume.updated_at | short_dt }} UTC</time></span>
         </span>
         <svg class="resume-chevron" viewBox="0 0 24 24" width="20" height="20" fill="none" aria-hidden="true"><path d="m9 5 7 7-7 7" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -42,89 +45,97 @@
         {% if not resume.is_active %}
         <div class="resume-actions">
           <form method="post" action="/actions/resume/{{ resume.id }}/activate">
+            {% include 'partials/csrf_input.html' %}
             <button type="submit">Сделать активным</button>
           </form>
         </div>
         {% endif %}
 
       <div class="resume-workspace">
-      <section class="resume-editor" aria-labelledby="preferences-{{ resume.id }}">
-      <h3 id="preferences-{{ resume.id }}">Поиск и опыт</h3>
+      <section class="resume-editor" aria-label="Настройки поиска и опыта">
       <form method="post" action="/actions/resume/{{ resume.id }}/update" class="resume-form">
-        <label for="q-{{ resume.id }}">Что искать по этому резюме</label>
+        {% include 'partials/csrf_input.html' %}
+        <div class="resume-query-row">
+        <div class="resume-query-label">
+          <label for="q-{{ resume.id }}">Какую работу ищем</label>
+          <span>Запрос для поиска на hh.ru</span>
+        </div>
         <input type="text" id="q-{{ resume.id }}" name="search_query" value="{{ resume.search_query }}" {{ 'disabled' if tasks.is_busy }}
                placeholder="например: Python разработчик">
-
-        <label for="c-{{ resume.id }}">Расскажите про свой опыт</label>
-        <textarea id="c-{{ resume.id }}" name="context_text" rows="6" {{ 'disabled' if tasks.is_busy }}
-                  placeholder="Всё, чего нет в резюме: проекты, детали задач, чем гордитесь, чего не хотите. Объём не ограничен — этот текст идёт в профиль кандидата.">{{ resume.context_text }}</textarea>
-        <small class="muted">
-          Из резюме и этого текста собирается профиль кандидата — его используют оценка
-          вакансий, сопроводительные письма и ответы на вопросы работодателя.
-        </small>
-
+        </div>
+        <div class="resume-field resume-experience-field">
+        <div class="resume-field-heading">
+          <label for="c-{{ resume.id }}">Дополнения к резюме</label>
+          <span id="context-hint-{{ resume.id }}">Учтём при сборке профиля</span>
+        </div>
+        <textarea id="c-{{ resume.id }}" name="context_text" rows="4" aria-label="Расскажите про свой опыт" aria-describedby="context-hint-{{ resume.id }}" {{ 'disabled' if tasks.is_busy }}
+                  placeholder="Расскажите о проектах, достижениях и пожеланиях, которых нет в резюме…">{{ resume.context_text }}</textarea>
+        </div>
         <div class="resume-form-actions">
-          <button type="submit" class="primary" {{ 'disabled' if tasks.is_busy }}>Сохранить</button>
+          <button type="submit" {{ 'disabled' if tasks.is_busy }}>Сохранить изменения</button>
         </div>
       </form>
       </section>
 
       <section class="profile-block" aria-labelledby="profile-{{ resume.id }}">
-        <h3 id="profile-{{ resume.id }}">Профиль кандидата</h3>
-        <p class="muted small">Краткое описание вашего опыта для оценки вакансий и сопроводительных писем.</p>
-        {% if resume.profile_summary %}
-          <div class="profile-head">
-            <span class="badge {{ 'cancelled' if resume.profile_is_stale else 'completed' }}">
-              профиль {{ 'устарел' if resume.profile_is_stale else 'актуален' }}
+        <div class="profile-toolbar">
+        <div class="profile-toolbar-description">
+          <div class="profile-title-row">
+            <h3 id="profile-{{ resume.id }}">Профиль кандидата</h3>
+            <span class="profile-status {{ ('is-stale' if resume.profile_is_stale else 'is-ready') if resume.profile_summary else '' }}">
+              {{ ('Устарел' if resume.profile_is_stale else 'Актуален') if resume.profile_summary else 'Не собран' }}
             </span>
-            <span class="muted small">
+          </div>
+          <p>Для оценки вакансий и сопроводительных писем.</p>
+        </div>
+        {% with button = 'Пересобрать профиль' if resume.profile_summary else 'Собрать профиль', primary = true %}
+          {% include "partials/profile_form.html" %}
+        {% endwith %}
+        </div>
+        {% if resume.profile_summary %}
+          <details class="profile-preview">
+            <summary class="link">Показать профиль кандидата</summary>
+            <p class="muted small">
               {{ resume.profile_summary | length }} символов
               {% if resume.profile_model %} · {{ resume.profile_model }}{% endif %}
               {% if resume.profile_updated_at %} · {{ resume.profile_updated_at | short_dt }}{% endif %}
-            </span>
-            {% with button = 'Пересобрать профиль', primary = false %}
-              {% include "partials/profile_form.html" %}
-            {% endwith %}
-          </div>
-          <details>
-            <summary class="link">Показать профиль кандидата</summary>
+            </p>
             <pre class="raw-text">{{ resume.profile_summary }}</pre>
           </details>
-        {% else %}
-          <div class="profile-head">
-            <span class="muted">Профиль ещё не собран. Пока для оценки используется текст резюме.</span>
-            {% with button = 'Собрать профиль', primary = true %}
-              {% include "partials/profile_form.html" %}
-            {% endwith %}
-          </div>
         {% endif %}
       </section>
       </div>
+
+      <section class="resume-imported" aria-labelledby="resume-data-{{ resume.id }}">
+      <div class="resume-data-heading">
+        <h3 id="resume-data-{{ resume.id }}">Данные из hh.ru</h3>
+        <a href="{{ resume.source_url }}" target="_blank" rel="noopener">Открыть оригинал ↗</a>
+      </div>
+      <div class="resume-sections">
       {% if resume.skills or resume.verified_skills %}
-        <section class="resume-skills" aria-label="Навыки">
+        <details class="resume-skills">
+          <summary>Навыки <span class="resume-section-count">{{ (resume.verified_skills + resume.skills) | unique | list | length }}</span></summary>
           <p class="tags">
             {% for skill in resume.verified_skills %}<span class="tag verified-skill" title="Подтверждено на hh.ru">✓ {{ skill }}</span>{% endfor %}
             {% for skill in resume.skills if skill not in resume.verified_skills %}<span class="tag">{{ skill }}</span>{% endfor %}
           </p>
-        </section>
+        </details>
       {% endif %}
-
-      <div class="resume-sections">
         {% if resume.experience_text %}
           <details>
-            <summary class="link">Опыт работы ({{ resume.experience_text | length }} символов)</summary>
+            <summary>Опыт работы</summary>
             <pre class="raw-text">{{ resume.experience_text }}</pre>
           </details>
         {% endif %}
         {% if resume.education_text %}
           <details>
-            <summary class="link">Образование</summary>
+            <summary>Образование</summary>
             <pre class="raw-text">{{ resume.education_text }}</pre>
           </details>
         {% endif %}
         {% if resume.certificates %}
           <details>
-            <summary class="link">Сертификаты ({{ resume.certificates | length }})</summary>
+            <summary>Сертификаты <span class="resume-section-count">{{ resume.certificates | length }}</span></summary>
             <ul class="plain-list">
               {% for certificate in resume.certificates %}<li>{{ certificate }}</li>{% endfor %}
             </ul>
@@ -132,15 +143,12 @@
         {% endif %}
         {% if resume.summary %}
           <details>
-            <summary class="link">О себе</summary>
+            <summary>О себе</summary>
             <pre class="raw-text">{{ resume.summary }}</pre>
           </details>
         {% endif %}
       </div>
-
-      <p class="resume-source muted small">
-        <a href="{{ resume.source_url }}" target="_blank" rel="noopener">Открыть резюме на hh.ru ↗</a>
-      </p>
+      </section>
 
       {% if not resume.skills or not resume.summary %}
         <p class="warn small">

@@ -5,7 +5,8 @@ import logging
 from src.config import Config
 from src.db.connection import init_sqlite, init_postgres
 from src.db.repository import DatabaseRepository
-from src.browser.local_process import LocalProcessLauncher
+from src.browser.docker_runtime import prepare_browser
+from src.browser.session import SESSION
 from src.browser.connector import BrowserConnector
 from src.applier.auto_applier import HHAutoApplier
 from src.db.models import ApplicationStatus
@@ -19,7 +20,7 @@ class ApplicationService:
         self.config = config
         self.db_conn = None
         self.repository = None
-        self.local_browser_launcher = None
+        self.browser_runtime = None
         self.llm_client = None
         self.resume_text = ""
         self.applier = None
@@ -59,11 +60,7 @@ class ApplicationService:
             min_score=self.config.applier.min_llm_score,
         )
 
-        if self.config.browser.provider == "local_process":
-            logger.info("Ensuring local Chrome process is running for auto-applier...")
-            self.local_browser_launcher = LocalProcessLauncher(self.config.browser)
-            endpoint, pid = self.local_browser_launcher.start()
-            self.config.browser.cdp.endpoint = endpoint
+        self.browser_runtime = await asyncio.to_thread(prepare_browser, self.config)
 
     async def run_apply_batch(self, limit: int = 10) -> dict:
         unapplied = await self.repository.get_unapplied_vacancies(limit=limit)
@@ -105,6 +102,9 @@ class ApplicationService:
         return stats
 
     async def close(self) -> None:
+        await SESSION.close()
+        if self.browser_runtime:
+            await asyncio.to_thread(self.browser_runtime.stop)
         if self.llm_client:
             try:
                 await self.llm_client.aclose()

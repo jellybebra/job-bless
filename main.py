@@ -6,7 +6,6 @@ import threading
 import time
 
 from src.config import Config
-from src.service.orchestrator import Orchestrator
 from src.applier.service import ApplicationService
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -42,10 +41,10 @@ async def main() -> None:
     logger.info("Starting Unified Python Career Agent")
     logger.info(f"Mode: {mode}")
     logger.info(f"DB Driver: {config.db.driver} ({config.db.sqlite_path if config.db.driver == 'sqlite' else config.db.host})")
-    logger.info(f"Browser Headless: {config.browser.headless}")
+    logger.info("HH browser: Docker / Camoufox")
     logger.info("==========================================")
 
-    if mode == "web":
+    if mode in ("web", "login", "run"):
         # The web UI owns the whole runtime: pages, background jobs, scheduler.
         from src.web.app import serve
 
@@ -60,9 +59,6 @@ async def main() -> None:
             logger.info(f"Application run completed: {stats}")
         finally:
             await app_service.close()
-    else:
-        logger.info("Vacancy collection module is currently disabled on startup.")
-        logger.info("All DB and Collector code remains intact and ready for re-activation.")
 
 
 def run() -> None:

@@ -266,21 +266,11 @@ FIELDS: Tuple[SettingField, ...] = (
                  lambda c: c.llm.modifiers.search),
 
     # --- браузер ---
-    SettingField("browser.provider", "Провайдер браузера", "choice", GROUP_BROWSER,
-                 lambda c: c.browser.provider, choices=("local_process", "docker", "external")),
-    SettingField("browser.transport", "Транспорт", "choice", GROUP_BROWSER,
-                 lambda c: c.browser.transport, choices=("cdp", "playwright")),
-    SettingField("browser.headless", "Headless-режим", "bool", GROUP_BROWSER,
-                 lambda c: c.browser.headless,
-                 help="Для ручного входа на hh.ru и решения капчи нужен видимый браузер."),
     SettingField("browser.close_stale_tabs", "Закрывать лишние вкладки при старте", "bool", GROUP_BROWSER,
                  lambda c: c.browser.close_stale_tabs,
                  help="Вкладки, оставшиеся от прошлых запусков, продолжают грузить hh.ru "
                       "и тратят лимит запросов."),
-    SettingField("browser.cdp.endpoint", "CDP endpoint", "str", GROUP_BROWSER,
-                 lambda c: c.browser.cdp.endpoint),
-    SettingField("browser.playwright.endpoint", "Playwright WS endpoint", "str", GROUP_BROWSER,
-                 lambda c: c.browser.playwright.endpoint),
+
 )
 
 FIELDS_BY_KEY: Dict[str, SettingField] = {f.key: f for f in FIELDS}
@@ -408,20 +398,9 @@ class SettingsService:
     # --- typed views used by the services ---------------------------------
 
     def browser_config(self) -> BrowserConfig:
+        # Container addresses come from deployment, never imported UI settings.
         base = self.config.browser
-        cdp = replace(base.cdp, endpoint=self.get("browser.cdp.endpoint", base.cdp.endpoint))
-        playwright = replace(
-            base.playwright, endpoint=self.get("browser.playwright.endpoint", base.playwright.endpoint)
-        )
-        return replace(
-            base,
-            provider=self.get("browser.provider", base.provider),
-            transport=self.get("browser.transport", base.transport),
-            headless=bool(self.get("browser.headless", base.headless)),
-            close_stale_tabs=bool(self.get("browser.close_stale_tabs", base.close_stale_tabs)),
-            cdp=cdp,
-            playwright=playwright,
-        )
+        return replace(base, close_stale_tabs=bool(self.get("browser.close_stale_tabs", base.close_stale_tabs)))
 
     def search_url_for(self, query: str) -> str:
         """Full hh.ru search URL: filters from the YAML template + the resume's query."""

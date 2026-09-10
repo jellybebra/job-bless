@@ -17,6 +17,11 @@ bin/
 vendor/
 dist/
 *.exe
+output/
+.env
+.env.*
+!.env.example
+.playwright-cli/
 
 # Мусор ОС и редакторов
 .DS_Store

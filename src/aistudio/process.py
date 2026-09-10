@@ -10,6 +10,7 @@ from pathlib import Path
 class OwnedProcess:
     def __init__(self, args, *, cwd: Path, env: dict, log: Path):
         self._job = None
+        self._stopped = False
         log.parent.mkdir(parents=True, exist_ok=True)
         with log.open("ab") as output:
             self.process = subprocess.Popen(
@@ -34,12 +35,15 @@ class OwnedProcess:
         return self.process.poll()
 
     def stop(self):
+        if self._stopped:
+            return
+        self._stopped = True
         # Closing the job also kills child browsers left behind by a crashed
         # helper. A job handle is owned by this process, never a remembered PID.
         if self._job:
             ctypes.windll.kernel32.CloseHandle(self._job)
             self._job = None
-        elif os.name != "nt" and self.process.poll() is None:
+        elif os.name != "nt":
             try:
                 os.killpg(self.process.pid, signal.SIGTERM)
             except ProcessLookupError:
@@ -55,6 +59,13 @@ class OwnedProcess:
             else:
                 self.process.kill()
             self.process.wait(timeout=3)
+        # The helper may have exited before its browser, including after a crash.
+        # Its session was created by us; never leave those descendants running.
+        if os.name != "nt":
+            try:
+                os.killpg(self.process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
         if self.process.stdin:
             self.process.stdin.close()
 

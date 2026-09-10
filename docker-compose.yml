@@ -1,43 +1,80 @@
 services:
-  postgres:
-    image: postgres:16-alpine
-    container_name: postgres_db
+  app:
+    image: ${JOB_BLESS_IMAGE_PREFIX:-ghcr.io/yn9m/job-bless}-app:${JOB_BLESS_IMAGE_TAG:-latest}
+    init: true
     restart: unless-stopped
+    user: "${APP_UID:-1000}:${APP_GID:-1000}"
+    mem_limit: 384m
+    cpus: 1.0
+    ports:
+      - "${WEB_BIND:-127.0.0.1}:${WEB_PORT:-8080}:8080"
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: job_bless_db
-    ports:
-      - "5432:5432"
+      WEB_HOST: 0.0.0.0
+      WEB_PORT: 8080
+      WEB_REQUIRE_AUTH: "true"
+      WEB_PASSWORD_HASH: ${WEB_PASSWORD_HASH:?Run python scripts/configure_server.py first}
+      WEB_PUBLIC_URL: ${WEB_PUBLIC_URL:-}
+      WEB_SECURE_COOKIES: ${WEB_SECURE_COOKIES:-false}
+      HH_VNC_HOST: hh-browser
+      AISTUDIO_SERVICE_URL: ${AISTUDIO_SERVICE_URL-http://aistudio:7860}
+      AISTUDIO_SERVICE_KEY: ${AISTUDIO_SERVICE_KEY:?Run python scripts/configure_server.py first}
+      GOOGLE_VNC_HOST: aistudio
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - ${JOB_BLESS_DATA_PATH:-./data/server}:/app/data
+    depends_on:
+      hh-browser:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d job_bless_db"]
-      interval: 5s
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=3)"]
+      interval: 15s
       timeout: 5s
-      retries: 10 # Увеличено число попыток для первого запуска и инициализации БД
-    networks:
-      - app_network
+      retries: 4
+    logging: &logging
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
 
-  browser:
-    build:
-      context: docker/camoufox
-      dockerfile: Dockerfile
-    container_name: career-browser
+  hh-browser:
+    image: ${JOB_BLESS_IMAGE_PREFIX:-ghcr.io/yn9m/job-bless}-hh:${JOB_BLESS_IMAGE_TAG:-latest}
+    init: true
     restart: unless-stopped
-    shm_size: '2gb'
-    ports:
-      - "3000:3000"
-      - "6080:6080"
+    stop_grace_period: 20s
+    mem_limit: 1024m
+    shm_size: 256m
+    cpus: 1.0
     volumes:
-      - camoufox-cache:/root/.cache/camoufox
-    networks:
-      - app_network
+      - hh-profile:/data/profile
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    logging: *logging
+
+  aistudio:
+    profiles: [google]
+    image: ${JOB_BLESS_IMAGE_PREFIX:-ghcr.io/yn9m/job-bless}-aistudio:${JOB_BLESS_IMAGE_TAG:-latest}
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 20s
+    mem_limit: 1536m
+    shm_size: 256m
+    cpus: 1.0
+    environment:
+      AISTUDIO_SERVICE_KEY: ${AISTUDIO_SERVICE_KEY:?Run python scripts/configure_server.py first}
+      HTTPS_PROXY: ${GOOGLE_PROXY_URL:-}
+      HTTP_PROXY: ${GOOGLE_PROXY_URL:-}
+      NO_PROXY: localhost,127.0.0.1,::1
+    volumes:
+      - google-data:/app/data
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7860/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 15s
+    logging: *logging
 
 volumes:
-  pgdata:
-  camoufox-cache:
-
-networks:
-  app_network:
-    driver: bridge
+  hh-profile:
+  google-data:
