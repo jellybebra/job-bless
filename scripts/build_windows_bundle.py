@@ -18,6 +18,7 @@ import urllib.request
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 LOCK = json.loads((ROOT / "packaging/components.json").read_text(encoding="utf-8"))
 CACHE = ROOT / "data/build-cache"
 VENDOR = ROOT / "vendor/aistudio"
@@ -124,6 +125,12 @@ def build_distribution():
     shutil.copy2(ROOT / "main.py", stage / "app/main.py")
     shutil.copy2(ROOT / "scripts/windows/launch.py", stage / "app/launch.py")
     shutil.copytree(VENDOR, stage / "app/vendor/aistudio")
+    # The native launcher builds the same pinned HH image used by Compose.
+    from src.browser.docker_runtime import BUILD_FILES
+    for name in (*BUILD_FILES, ".dockerignore"):
+        destination = stage / "app/vendor/hh" / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / name, destination)
     shutil.copy2(ROOT / "scripts/windows/Start-job-bless.vbs", stage / "Start-job-bless.vbs")
     shutil.copy2(ROOT / "packaging/THIRD_PARTY_NOTICES.md", stage / "THIRD_PARTY_NOTICES.md")
     shutil.copy2(ROOT / "packaging/WINDOWS_README.txt", stage / "README.txt")

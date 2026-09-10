@@ -2,8 +2,11 @@
    The list comes from the endpoint itself; when it is unavailable the field
    falls back to free text so the button still works. #}
 <form method="post" action="/actions/resume/{{ resume.id }}/profile" class="profile-form">
+  {% include 'partials/csrf_input.html' %}
+  <div class="profile-model-field">
+  <label for="profile-model-{{ resume.id }}">Модель нейросети</label>
   {% if models %}
-    <select name="model" title="Модель для сборки профиля">
+    <select id="profile-model-{{ resume.id }}" name="model" aria-label="Модель для сборки профиля">
       {% for model in models %}
         <option value="{{ model }}" {{ 'selected' if model == profile_model }}>{{ model }}</option>
       {% endfor %}
@@ -12,7 +15,8 @@
       {% endif %}
     </select>
   {% else %}
-    <input type="text" name="model" value="{{ profile_model }}" placeholder="модель для профиля" aria-label="Модель для сборки профиля">
+    <input type="text" id="profile-model-{{ resume.id }}" name="model" value="{{ profile_model }}" placeholder="модель для профиля" aria-label="Модель для сборки профиля">
   {% endif %}
+  </div>
   <button type="submit" class="{{ 'primary' if primary }}">{{ button }}</button>
 </form>

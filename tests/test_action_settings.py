@@ -66,7 +66,9 @@ def test_action_modal_persists_only_its_own_settings(client, kind, values, expec
     settings = client.app.state.settings
     before = settings.all_values()
     page = client.get('/actions').text
-    assert f'data-open-{kind}' in page and f'id="{kind}-dialog"' in page
+    # Profile generation now lives on the resume card, without a duplicate action.
+    assert (f'data-open-{kind}' in page) == (kind != 'profile')
+    assert f'id="{kind}-dialog"' in page
     modal = client.get(f'/actions/{kind}-settings')
     assert modal.status_code == 200
     for key in ACTION_KEYS[kind]:

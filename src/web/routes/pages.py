@@ -9,7 +9,7 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 
-from src.web.panel import hh_account_status, panel_context
+from src.web.panel import hh_account_status, llm_card_context, panel_context
 from src.db.models import TaskKind
 from src.web import jobs
 from src.web.tasks import TaskBusyError
@@ -197,8 +197,8 @@ async def resume_page(request: Request, error: str = Query("")) -> HTMLResponse:
         resumes=resumes,
         account=account,
         error=error,
-        # Cached model list — the profile model is picked right by the button.
-        models=request.app.state.llm_health.models,
+        # Use the same provider's catalog as the main model picker.
+        models=llm_card_context(request)["panel_llm_models"],
         profile_model=settings.profile_config().model,
     )
 

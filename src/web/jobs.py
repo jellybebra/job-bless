@@ -1,22 +1,20 @@
 """Background jobs triggered from the web UI and by the scheduler."""
 
 import asyncio
-import json
 import logging
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
-import httpx
-from playwright.async_api import async_playwright
 
 from src.activity.service import ActivityScroller
 from src.applier.auto_applier import HHAutoApplier
 from src.applier.cover_letter import build_writer
 from src.browser.account import HH_COOKIE_DOMAIN, LOGIN_SELECTORS, is_hh_url, read_hh_account
 from src.browser.connector import LIVE_PAGES, BrowserConnector
-from src.browser.local_process import LocalProcessLauncher
+from src.browser.session import SESSION, save_storage_state as _save_hh_session
+from src.browser.intervention import intervention_message
 from src.collector.collector import HHVacancyCardCollector
 from src.config import BrowserConfig
 from src.db.models import (
@@ -35,27 +33,16 @@ from src.web.tasks import TaskContext
 
 logger = logging.getLogger(__name__)
 
-STORAGE_STATE_PATH = "./data/storage_state.json"
-
 
 # ----------------------------------------------------------------------
 # browser helpers
 # ----------------------------------------------------------------------
 
-async def _cdp_alive(endpoint: str) -> bool:
-    try:
-        async with httpx.AsyncClient(timeout=2.0) as client:
-            response = await client.get(f"{endpoint.rstrip('/')}/json/version")
-            return response.status_code == 200
-    except httpx.HTTPError:
-        return False
-
-
 async def close_stream(stream) -> None:  # noqa: ANN001
     """Finalize an async generator so its browser tab is released now.
 
     An abandoned generator is only closed by the garbage collector, which can
-    leave a Chrome tab hanging around for minutes after «Стоп». When the job
+    leave a browser tab hanging around for minutes after «Стоп». When the job
     itself is being cancelled, the close is shielded so it still completes.
     """
     closing = asyncio.ensure_future(stream.aclose())
@@ -79,32 +66,9 @@ def _log_rate_limits(ctx: TaskContext) -> None:
     )
 
 
-# Lanes start in parallel; without this both could launch Chrome at once.
-_browser_lock = asyncio.Lock()
-
-
 async def ensure_browser(ctx: TaskContext) -> BrowserConfig:
-    """Make sure a browser we can attach to is running; return its config."""
-    browser_config = ctx.settings.browser_config()
-    if browser_config.provider != "local_process":
-        return browser_config
-
-    async with _browser_lock:
-        if await _cdp_alive(browser_config.cdp.endpoint):
-            ctx.log(f"браузер уже запущен ({browser_config.cdp.endpoint})")
-            return browser_config
-
-        ctx.log("запускаю Chrome...")
-        launcher = LocalProcessLauncher(browser_config)
-        endpoint, pid = launcher.start()
-        browser_config.cdp.endpoint = endpoint
-
-        for _ in range(20):  # Chrome needs a moment before the CDP port answers.
-            if await _cdp_alive(endpoint):
-                break
-            await asyncio.sleep(0.5)
-        ctx.log(f"Chrome готов (pid={pid}, {endpoint})")
-        return browser_config
+    """Docker startup is owned by the application, not individual jobs."""
+    return ctx.settings.browser_config()
 
 
 # ----------------------------------------------------------------------
@@ -135,8 +99,8 @@ async def collect_job(ctx: TaskContext) -> Dict[str, Any]:
             id=run_id,
             task_id=run_id,
             search_url=search_url,
-            browser_session_id=browser_config.cdp.endpoint,
-            transport=browser_config.transport,
+            browser_session_id=browser_config.endpoint,
+            transport="playwright",
             status=SearchRunStatus.RUNNING,
             started_at=datetime.now(timezone.utc),
             # Remembered so the vacancies list can show what each resume found.
@@ -371,28 +335,19 @@ async def resume_import_job(ctx: TaskContext, resume_id: Optional[int] = None) -
 async def login_job(ctx: TaskContext) -> Dict[str, Any]:
     """Confirm the actual hh.ru account and persist it with the login run."""
     browser_config = await ensure_browser(ctx)
-    if browser_config.headless:
-        raise ValueError("Для входа нужен видимый браузер — выключите headless в настройках")
-
-    async with async_playwright() as pw:
-        browser = await pw.chromium.connect_over_cdp(
-            browser_config.cdp.endpoint, timeout=browser_config.cdp.timeout_ms
-        )
-        contexts = browser.contexts
-        context = contexts[0] if contexts else await browser.new_context()
+    async with SESSION.connection(browser_config) as (browser, context):
         switching = bool(ctx.state.params.get("switch_account"))
         # Keep the working profile intact while the user signs into another account.
-        login_context = await browser.new_context() if switching else context
-        # Chrome's launch arguments already open hh.ru. Reuse that tab (or an
-        # existing hh.ru tab) instead of adding a second copy on every login.
+        login_context = await browser.new_context(no_viewport=True) if switching else context
+        # Reuse the existing login/challenge tab without interrupting its state.
         pages = [page for page in login_context.pages if not page.is_closed() and page not in LIVE_PAGES]
         page = next((page for page in reversed(pages) if is_hh_url(page.url)), None)
         if page is None:
-            page = next((page for page in pages if page.url in ("about:blank", "chrome://newtab/")), None)
+            page = next((page for page in pages if page.url in ("about:blank", "about:newtab")), None)
         created_page = page is None
         if created_page:
             page = await login_context.new_page()
-        storage_path = Path(STORAGE_STATE_PATH).resolve()
+        storage_path = Path(browser_config.storage_state_path).resolve()
         storage_path.parent.mkdir(parents=True, exist_ok=True)
         try:
             ctx.raise_if_stopped()
@@ -405,8 +360,9 @@ async def login_job(ctx: TaskContext) -> Dict[str, Any]:
                 await page.wait_for_load_state("domcontentloaded", timeout=15000)
                 account = await read_hh_account(page)
             if not account["logged_in"]:
-                await page.goto("https://hh.ru/account/login", wait_until="domcontentloaded")
-                ctx.log("войдите в аккаунт в Chrome — вход определится автоматически")
+                if not intervention_message(page.url):
+                    await page.goto("https://hh.ru/account/login", wait_until="domcontentloaded")
+                ctx.log("войдите в аккаунт в окне браузера — вход определится автоматически")
                 ctx.log("если статус не обновился, нажмите «Я вошёл» в интерфейсе")
                 account = await _wait_for_hh_login(ctx, page)
             ctx.raise_if_stopped()
@@ -416,6 +372,7 @@ async def login_job(ctx: TaskContext) -> Dict[str, Any]:
                 await _save_hh_session(context, storage_path, checkpoint=ctx.raise_if_stopped)
             # Login remains confirmed even if the subsequent resume import is stopped.
             ctx.state.result = {"storage_state": str(storage_path), "account_verified": True, **account}
+            await ctx.repository.save_settings({"hh.login_required": "false"})
         except (Exception, asyncio.CancelledError):
             # Leave reused tabs alone, including when verification fails. A
             # successful login tab stays open for the user and the next check.
@@ -441,19 +398,6 @@ async def login_job(ctx: TaskContext) -> Dict[str, Any]:
         ctx.log(f"Вход выполнен, но автоимпорт не завершён: {error}. Повторите на странице «Резюме».")
         result["resume_import"] = {"error": str(error)}
     return result
-
-
-async def _save_hh_session(context, storage_path: Path, *, checkpoint=None) -> None:
-    """Replace the saved session only after obtaining a complete new snapshot."""
-    snapshot = await context.storage_state()
-    if checkpoint:
-        checkpoint()
-    pending = storage_path.with_suffix(".pending.json")
-    try:
-        pending.write_text(json.dumps(snapshot), encoding="utf-8")
-        pending.replace(storage_path)
-    finally:
-        pending.unlink(missing_ok=True)
 
 
 async def _commit_hh_account(ctx, source, target, storage_path: Path) -> dict:
@@ -486,7 +430,7 @@ async def _commit_hh_account(ctx, source, target, storage_path: Path) -> dict:
             await restoring
         except Exception:
             ctx.state.result = {"session_preserved": False}
-            ctx.log("Не удалось восстановить прежнюю сессию в Chrome. Сохранённая копия не изменена.")
+            ctx.log("Не удалось восстановить прежнюю сессию в браузере. Сохранённая копия не изменена.")
         raise
     finally:
         try:
@@ -501,6 +445,8 @@ async def _wait_for_hh_login(ctx: TaskContext, page) -> Dict[str, Any]:
     try:
         while not confirmation.done():
             ctx.raise_if_stopped()
+            if page.is_closed():
+                raise RuntimeError("Браузер HH был закрыт или перезапущен. Закройте окно входа и откройте браузер снова.")
             account = await read_hh_account(page)
             if account["logged_in"]:
                 return account
@@ -515,7 +461,7 @@ async def _wait_for_hh_login(ctx: TaskContext, page) -> Dict[str, Any]:
             pass
         account = await read_hh_account(page)
         if not account["logged_in"]:
-            raise ValueError("Вход в hh.ru не подтверждён. Завершите вход в Chrome и попробуйте снова.")
+            raise ValueError("Вход в hh.ru не подтверждён. Завершите вход в браузере и попробуйте снова.")
         return account
     finally:
         confirmation.cancel()

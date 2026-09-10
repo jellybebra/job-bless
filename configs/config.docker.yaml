@@ -1,47 +1,23 @@
-app:
-  isProduction: true
-  address: ":8080"
-
-log:
-  level: "info"
-  encoding: "json"
+web:
+  host: 0.0.0.0
+  port: 8080
+  require_auth: true
 
 browser:
-  provider: "docker"
-  transport: "playwright"
-
-  playwright:
-    endpoint: "ws://career-browser:3000/camoufox"
-    browser_type: "firefox"
+  endpoint: ws://hh-browser:3000/hh
 
 postgres:
-  host: "postgres"
-  port: "5432"
-  username: "postgres"
-  password: "password"
-  dbname: "job_bless_db"
-  sslmode: "disable"
+  driver: sqlite
+  sqlite_path: ./data/career_agent.db
 
 llm:
   enabled: false
-  standard: "openai" # openai | gemini | anthropic
-  base_url: "http://aistudio-bridge:7860"
-  api_key: "" # задаётся через LLM_API_KEY
-  model: "gemini-flash-latest"
-  embedding_model: "gemini-embedding-001"
-  temperature: 1.0
-  max_tokens: 2048
-  timeout_sec: 120
-  max_retries: 3
+  connection: custom
+  model: gemini-flash-latest
 
-
+log:
+  level: info
 
 hh_autoscroller:
-  search_url: "https://hh.ru/search/vacancy?text=Python"
-  scroll_step_min: 350
-  scroll_step_max: 650
-  scroll_pause_min: "200ms"
-  scroll_pause_max: "600ms"
-  page_timeout: "30s"
-  max_scroll_steps_per_page: 200
-  stable_cycles: 3
+  search_url: https://hh.ru/search/vacancy?text=Python
+  max_pages: 10

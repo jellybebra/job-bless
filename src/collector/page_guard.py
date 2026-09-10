@@ -1,5 +1,6 @@
 import logging
 from playwright.async_api import Page
+from src.browser.intervention import HHInterventionRequired, intervention_message
 
 logger = logging.getLogger(__name__)
 
@@ -10,8 +11,6 @@ class HHPageGuard:
     """
 
     async def check_page_state(self, page: Page, is_navigation_step: bool = False) -> None:
-        url = page.url.lower()
-        if "captcha" in url or "check-captcha" in url:
-            logger.warning(f"Captcha detected on URL: {page.url}")
-        if "403" in url or "forbidden" in url:
-            logger.warning(f"Access forbidden (403) detected on URL: {page.url}")
+        message = intervention_message(page.url)
+        if message:
+            raise HHInterventionRequired(message)

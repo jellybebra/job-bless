@@ -1,0 +1,21 @@
+# Local development: docker compose -f docker-compose.yml -f compose.build.yml up -d --build
+# Local tags are separate from release images in GHCR.
+services:
+  app:
+    image: ${COMPOSE_PROJECT_NAME:-job-bless}-app:local
+    pull_policy: build
+    build:
+      context: .
+      target: web
+  hh-browser:
+    image: ${COMPOSE_PROJECT_NAME:-job-bless}-hh-browser:local
+    pull_policy: build
+    build:
+      context: .
+      dockerfile: docker/hh/Dockerfile
+  aistudio:
+    image: ${COMPOSE_PROJECT_NAME:-job-bless}-aistudio:local
+    pull_policy: build
+    build:
+      context: .
+      target: google

@@ -46,9 +46,17 @@ class AIStudioRuntime:
 
     @property
     def available(self):
-        required = ("manifest.json", "node/node.exe", "camoufox/camoufox.exe", "app/main.js",
+        required = ("manifest.json", self.node_path, self.browser_path, "app/main.js",
                     "app/node_modules/playwright/package.json", "app/configs/models.json")
-        return os.name == "nt" and all((self.bundle / item).is_file() for item in required)
+        return all((self.bundle / item).is_file() for item in required)
+
+    @property
+    def node_path(self):
+        return "node/node.exe" if os.name == "nt" else "node/node"
+
+    @property
+    def browser_path(self):
+        return "camoufox/camoufox.exe" if os.name == "nt" else "camoufox/camoufox"
 
     @property
     def busy(self):
@@ -101,7 +109,7 @@ class AIStudioRuntime:
             await asyncio.to_thread(self._prepare)
             await self._stop_processes()
             if login or not self._has_auth():
-                self._set_state("login", "Войдите в Google в открывшемся окне браузера на этом компьютере.")
+                self._set_state("login", "Войдите в Google в окне браузера. После входа проверим подключение автоматически.")
                 before = self._auth_stamp()
                 self._login = self._spawn("login")
                 await self._wait_for_login(before)
@@ -136,7 +144,6 @@ class AIStudioRuntime:
     def _prepare(self):
         self.data.mkdir(parents=True, exist_ok=True)
         if not self._lock_file:
-            import msvcrt
             lock = (self.data / "runtime.lock").open("a+b")
             lock.seek(0)
             if not lock.read(1):
@@ -144,7 +151,12 @@ class AIStudioRuntime:
                 lock.flush()
             lock.seek(0)
             try:
-                msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+                if os.name == "nt":
+                    import msvcrt
+                    msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except OSError:
                 lock.close()
                 raise RuntimeErrorWithHint("Это подключение уже используется другим экземпляром job-bless.") from None
@@ -168,12 +180,12 @@ class AIStudioRuntime:
             "NODE_ENV": "production", "HOST": "127.0.0.1", "PORT": str(port),
             "API_KEYS": self._key, "CHECK_UPDATE": "false", "LOG_LEVEL": "WARN",
             "MAX_RETRIES": "1", "SWITCH_ON_USES": "0", "MAX_CONTEXTS": "1",
-            "CAMOUFOX_EXECUTABLE_PATH": str(self.bundle / "camoufox/camoufox.exe"),
+            "CAMOUFOX_EXECUTABLE_PATH": str(self.bundle / self.browser_path),
             "JOB_BLESS_AISTUDIO_APP": str(self.bundle / "app"),
             "JOB_BLESS_AISTUDIO_WS_PORT": str(ws_port), "JOB_BLESS_AISTUDIO_RUN_ID": self._run_id,
         })
         return OwnedProcess(
-            [str(self.bundle / "node/node.exe"), str(ROOT / "src/aistudio" / f"{kind}.cjs")],
+            [str(self.bundle / self.node_path), str(ROOT / "src/aistudio" / f"{kind}.cjs")],
             cwd=self.data, env=env, log=self.data / f"{kind}.log",
         )
 
@@ -219,6 +231,11 @@ class AIStudioRuntime:
             if status.get("connected"):
                 return
             if status.get("error"):
+                if status.get("error_code") == "region_unsupported":
+                    raise RuntimeErrorWithHint(
+                        "Google AI Studio недоступен из текущей сети: Google вернул «Region not supported». "
+                        "Настройте доступ из поддерживаемого региона и нажмите «Запустить снова». Повторный вход не нужен."
+                    )
                 raise RuntimeErrorWithHint("Не удалось открыть Google AI Studio. Проверьте доступ к Google и повторите вход.")
             await asyncio.sleep(.5)
         raise RuntimeErrorWithHint("Google AI Studio не ответил вовремя. Проверьте доступ к Google и повторите вход.")
@@ -236,16 +253,22 @@ class AIStudioRuntime:
             model = current if current in self.models else next((name for name in self.models if "flash" in name), "")
             if not model:
                 raise RuntimeErrorWithHint("В сервисе не найдена модель для работы с текстом.")
-            response = await client.post("/v1/chat/completions", json={
-                "model": model, "messages": [{"role": "user", "content": "Reply with the single word OK."}],
-                "max_tokens": 64, "temperature": 1.0, "stream": False,
-            })
-            if response.status_code >= 400:
-                raise RuntimeErrorWithHint("Сервис запущен, но модель не ответила. Проверьте доступность Google AI Studio для аккаунта или повторите вход.")
-            choices = response.json().get("choices") or []
-            if not choices or not choices[0].get("message", {}).get("content"):
+            for token_limit in (64, 1024):
+                response = await client.post("/v1/chat/completions", json={
+                    "model": model, "messages": [{"role": "user", "content": "Reply with the single word OK."}],
+                    "max_tokens": token_limit, "temperature": 1.0, "stream": False,
+                })
+                if response.status_code >= 400:
+                    raise RuntimeErrorWithHint("Сервис запущен, но модель не ответила. Проверьте доступность Google AI Studio для аккаунта или повторите вход.")
+                choices = response.json().get("choices") or []
+                if choices and choices[0].get("message", {}).get("content"):
+                    return model
+                # Thinking can consume the tiny probe budget before any answer.
+                # Retry only that case once; never mark an empty answer as ready.
+                if token_limit == 64 and choices and choices[0].get("finish_reason") == "length":
+                    logger.info("Google probe exhausted its short token budget; retrying with room for an answer")
+                    continue
                 raise RuntimeErrorWithHint("Модель вернула пустой ответ. Попробуйте запустить подключение ещё раз.")
-            return model
 
     async def _stop_processes(self):
         for name in ("_login", "_server"):

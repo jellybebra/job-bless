@@ -107,9 +107,9 @@ class HHResumeParser:
         if "/account/login" in page.url or "/auth/" in page.url:
             raise PermissionError("Войдите в hh.ru на странице «Действия» и повторите обновление.")
         if "/captcha" in page.url or await page.locator('[data-qa="captcha-input"], input[name="captcha"]').count():
-            raise PermissionError("hh.ru показал капчу. Откройте hh.ru в Chrome, пройдите проверку и повторите обновление.")
+            raise PermissionError("hh.ru показал капчу. Откройте браузер HH в панели, пройдите проверку и повторите обновление.")
         if response and response.status >= 400:
-            raise ValueError(f"hh.ru не открыл страницу резюме (HTTP {response.status}). Откройте hh.ru в Chrome и проверьте вход в аккаунт.")
+            raise ValueError(f"hh.ru не открыл страницу резюме (HTTP {response.status}). Откройте браузер HH в панели и проверьте вход в аккаунт.")
 
     async def parse(self, page: Page, resume_url: str, timeout_ms: int = 30000) -> Resume:
         logger.info("opening resume page: %s", resume_url)

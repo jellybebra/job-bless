@@ -137,7 +137,7 @@ class HHVacancyCardCollector:
                 logger.info(f"Opening search URL for task '{task_id}': {search_url}")
                 if limiter:
                     await limiter.acquire(should_stop=lambda: self._stop_requested)
-                await page.goto(search_url, wait_until="domcontentloaded", timeout=browser_config.cdp.timeout_ms)
+                await page.goto(search_url, wait_until="domcontentloaded", timeout=browser_config.timeout_ms)
                 await asyncio.sleep(1.0)
 
                 await self.page_guard.check_page_state(page, is_navigation_step=True)

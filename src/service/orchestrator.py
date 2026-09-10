@@ -6,7 +6,8 @@ from src.config import Config
 from src.db.connection import init_sqlite, init_postgres
 from src.db.repository import DatabaseRepository
 from src.db.models import SearchRun, SearchRunStatus, PageCommitParams, VacancyCard, CollectionSummary
-from src.browser.local_process import LocalProcessLauncher
+from src.browser.docker_runtime import prepare_browser
+from src.browser.session import SESSION
 from src.collector.collector import HHVacancyCardCollector
 
 logger = logging.getLogger(__name__)
@@ -17,7 +18,7 @@ class Orchestrator:
         self.config = config
         self.db_conn = None
         self.repository = None
-        self.local_browser_launcher = None
+        self.browser_runtime = None
         self.collector = HHVacancyCardCollector()
 
     async def initialize(self) -> None:
@@ -31,12 +32,7 @@ class Orchestrator:
             self.db_conn = await init_postgres(self.config.db)
             self.repository = DatabaseRepository(self.db_conn, driver="postgres")
 
-        # 2. Start local Chrome process if configured
-        if self.config.browser.provider == "local_process":
-            logger.info("Ensuring local Chrome process is running...")
-            self.local_browser_launcher = LocalProcessLauncher(self.config.browser)
-            endpoint, pid = self.local_browser_launcher.start()
-            self.config.browser.cdp.endpoint = endpoint
+        self.browser_runtime = await asyncio.to_thread(prepare_browser, self.config)
 
     async def run_job(self, task_id: str = "run_local_1", search_url: str = "") -> CollectionSummary:
         url = search_url or self.config.scroller.search_url
@@ -47,8 +43,8 @@ class Orchestrator:
             id=task_id,
             task_id=task_id,
             search_url=url,
-            browser_session_id=self.config.browser.cdp.endpoint,
-            transport=self.config.browser.transport,
+            browser_session_id=self.config.browser.endpoint,
+            transport="playwright",
             status=SearchRunStatus.RUNNING,
             started_at=datetime.now(timezone.utc),
         )
@@ -90,6 +86,9 @@ class Orchestrator:
 
     async def close(self) -> None:
         logger.info("Shutting down Orchestrator resources...")
+        await SESSION.close()
+        if self.browser_runtime:
+            await asyncio.to_thread(self.browser_runtime.stop)
         if self.db_conn:
             try:
                 if self.config.db.driver == "sqlite":

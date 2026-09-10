@@ -1,0 +1,32 @@
+# Use with docker-compose.yml. Only Caddy is reachable from the internet.
+services:
+  app:
+    ports: !reset []
+    environment:
+      WEB_PUBLIC_URL: https://${SITE_DOMAIN:?Set SITE_DOMAIN in .env}
+      WEB_SECURE_COOKIES: "true"
+  proxy:
+    image: caddy:2.10.2-alpine
+    restart: unless-stopped
+    mem_limit: 128m
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      SITE_DOMAIN: ${SITE_DOMAIN:?Set SITE_DOMAIN in .env}
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      app:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+volumes:
+  caddy-data:
+  caddy-config:

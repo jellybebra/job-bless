@@ -214,14 +214,14 @@ def test_settings_feed_typed_configs(client):
     client.post(
         "/actions/settings",
         data={
-            "browser.headless": "1",
+            "browser.close_stale_tabs": "1",
             "llm.standard": "anthropic",
             "llm.model": "gemini-2.5-flash-lite",
         },
         follow_redirects=False,
     )
     settings = client.app.state.settings
-    assert settings.browser_config().headless is True
+    assert settings.browser_config().close_stale_tabs is True
     assert settings.llm_config().standard == "anthropic"
     client.post("/actions/search-settings", data={"scroller.max_pages": "7"})
     assert settings.scroller_config().max_pages == 7
@@ -384,7 +384,7 @@ def test_token_guard_blocks_without_token(tmp_path):
     config.web.token = "s3cret"
 
     with TestClient(create_app(config)) as guarded:
-        assert guarded.get("/").status_code == 401
+        assert guarded.get("/", follow_redirects=False).headers["location"] == "/login"
         assert guarded.get("/static/app.css").status_code == 200
         allowed = guarded.get("/?token=s3cret", follow_redirects=True)
         assert allowed.status_code == 200
@@ -487,7 +487,7 @@ def test_panel_has_action_settings_buttons_and_llm_health_status(client):
 
     panel = client.get("/partials/status").text
     assert 'aria-label="Настроить оценку вакансий"' in panel
-    assert 'aria-label="Настроить описание опыта"' in panel
+    assert 'aria-label="Настроить описание опыта"' not in panel
     assert "search-model" not in panel
     assert "llm-status ok" in panel
 
@@ -598,7 +598,7 @@ def test_new_user_can_collect_but_needs_resume_for_scoring_and_applying(client):
     assert 'href="/resume">Перейти к резюме</a>' in panel
     assert panel.count('id="necessary-settings"') == 1
     assert 'resume-banner' not in panel
-    assert panel.count('data-action-id=') == 8
+    assert panel.count('data-action-id=') == 7
     assert "Начните с вашего резюме" not in panel
     assert 'aria-label="Настроить оценку вакансий"' in panel
     assert "Собрать вакансии" in panel
@@ -826,6 +826,7 @@ def test_serve_marks_app_as_shutting_down_on_signal(tmp_path, monkeypatch):
             captured["exited"] = True
 
     monkeypatch.setattr(uvicorn, "Server", FakeServer)
+    monkeypatch.setattr(web_app, "prepare_browser", lambda config: None)
     asyncio.run(web_app.serve(config))
 
     server = captured["server"]
@@ -966,7 +967,7 @@ def test_selected_vacancies_start_and_redirect_to_actions(client, monkeypatch):
     ("collect", "main", TaskKind.COLLECT), ("score", "main", TaskKind.SCORE),
     ("apply", "main", TaskKind.APPLY), ("pipeline", "main", TaskKind.COLLECT),
     ("login", "main", TaskKind.LOGIN), ("resume_touch", "main", TaskKind.RESUME_TOUCH),
-    ("profile", "profile", TaskKind.PROFILE), ("activity", "activity", TaskKind.ACTIVITY),
+    ("activity", "activity", TaskKind.ACTIVITY),
 ])
 def test_running_card_switches_play_to_stop_in_its_lane(client, action, lane, kind):
     import asyncio

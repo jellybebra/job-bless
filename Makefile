@@ -1,7 +1,7 @@
 .PHONY: help install run run-local login apply apply-local up-local web web-local test clean
 
-PYTHON = .venv/Scripts/python
-PYTEST = .venv/Scripts/pytest
+PYTHON = uv run --no-project python
+PYTEST = $(PYTHON) -m pytest
 
 help:
 	@echo "Available commands:"
@@ -14,12 +14,11 @@ help:
 	@echo "  make clean       - Clean temporary files & bytecode"
 
 install:
-	uv venv .venv
-	uv pip install --python .venv -e .
+	uv sync --frozen --no-install-project
 
 login:
 	@echo "=========================================="
-	@echo "Launching Chrome for manual HH account login..."
+	@echo "Opening the panel for HH login in Docker / Camoufox..."
 	@echo "=========================================="
 	$(PYTHON) -m src.browser.login_session configs/config.local.yaml
 

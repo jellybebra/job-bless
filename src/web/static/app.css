@@ -132,7 +132,7 @@ h2 { margin: 0 0 14px; font-size: 17px; }
 .account-dot { width: 7px; height: 7px; flex: none; border-radius: 50%; background: var(--ok); }
 .account-identity strong { font-size: 16px; font-weight: 500; }
 .action-card.account-card .action-control:not(.is-stop) { width: auto; min-height: 40px; height: auto; padding: 8px 14px; border-radius: 10px; font-size: 13px; }
-.account-card .action-card-footer { justify-content: flex-end; }
+.account-card .action-card-footer { justify-content: flex-end; flex-wrap: wrap; }
 .running-dot { width: 7px; height: 7px; margin-top: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 4px rgba(79,140,255,.1); }
 .action-hint { margin: 14px 0 18px; min-height: 18px; font-size: 12px; color: var(--muted); }
 .action-hint .link { font-size: 12px; color: var(--danger); text-align: left; }
@@ -535,6 +535,8 @@ body.console-resizing { cursor: ns-resize; user-select: none; }
 .resume-card > .resume-head::-webkit-details-marker { display: none; }
 .resume-card > .resume-head:hover { background: var(--panel-2); }
 .resume-summary-title { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; min-width: 0; }
+.resume-title-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 16px; }
+.resume-title-row .badge { flex: none; }
 .resume-title { font-size: 20px; font-weight: 500; overflow-wrap: anywhere; }
 .resume-summary-meta { font-size: 13px; overflow-wrap: anywhere; }
 .resume-skills .verified-skill { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 50%, var(--border)); }
@@ -543,26 +545,61 @@ body.console-resizing { cursor: ns-resize; user-select: none; }
 .resume-card[open] > .resume-head .resume-chevron { transform: rotate(90deg); color: var(--accent); }
 .resume-content { padding: 24px; }
 .resume-content > .resume-actions { justify-content: flex-end; }
-.resume-workspace { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 28px; margin: 24px 0; padding-top: 22px; border-top: 1px solid var(--border); }
+.resume-workspace { display: flex; flex-direction: column; gap: 24px; margin: 24px 0 32px; padding-top: 22px; border-top: 1px solid var(--border); }
 .resume-workspace:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
 .resume-workspace > section { min-width: 0; }
-.resume-workspace h3 { font-size: 15px; font-weight: 500; margin: 0 0 12px; }
-.resume-workspace .resume-form { margin: 0; }
-.resume-page .profile-block { margin: 0; padding: 20px; align-self: start; }
-.resume-page .profile-head { align-items: flex-start; gap: 12px; }
-.resume-page .profile-head form { width: 100%; margin: 4px 0 12px; }
-.resume-page .profile-form { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+.resume-workspace h3, .resume-data-heading h3 { font-size: 16px; font-weight: 600; margin: 0; }
+.resume-workspace .resume-form { margin: 0; gap: 16px; }
+.resume-query-row { display: grid; grid-template-columns: minmax(180px, .6fr) minmax(0, 1fr); align-items: center; gap: 24px; padding-bottom: 24px; margin-bottom: 8px; border-bottom: 1px solid var(--border); }
+.resume-query-label { display: flex; flex-direction: column; gap: 4px; }
+.resume-page .resume-query-label label { margin: 0; color: var(--text); font-size: 15px; font-weight: 600; }
+.resume-query-label span, .resume-field-heading span { color: var(--muted); font-size: 12px; }
+.resume-query-row input { width: 100%; min-width: 0; }
+.resume-field { display: flex; flex-direction: column; gap: 8px; }
+.resume-page .resume-field label, .resume-page .profile-form label { color: var(--text); font-size: 13px; margin: 0; }
+.resume-field-heading { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 4px 16px; }
+.resume-page .resume-field-heading label { font-size: 15px; font-weight: 600; }
+.resume-field input, .resume-field textarea { width: 100%; min-width: 0; }
+.resume-field textarea { min-height: 112px; resize: vertical; padding: 12px 14px; }
+.resume-page .resume-form-actions { display: flex; justify-content: flex-end; margin-top: 0; }
+.resume-page .profile-block { margin: 0; padding: 20px 0 0; border: 0; border-top: 1px solid var(--border); border-radius: 0; background: none; }
+.profile-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 24px; }
+.profile-toolbar-description { min-width: 0; }
+.profile-title-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.profile-toolbar-description p { color: var(--muted); font-size: 12px; margin: 6px 0 0; }
+.profile-status { font-size: 12px; color: var(--muted); }
+.profile-status::before { content: ''; display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: currentColor; margin-right: 6px; vertical-align: middle; }
+.profile-status.is-ready { color: var(--ok); }
+.profile-status.is-stale { color: var(--warn); }
+.profile-preview { margin-top: 16px; font-size: 13px; }
+.resume-page .profile-form { display: flex; gap: 10px; align-items: flex-end; margin: 0; flex: 0 1 480px; min-width: 0; }
+.profile-model-field { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 0; }
+.resume-page .profile-form label { color: var(--muted); font-size: 12px; }
+.resume-page .profile-form button { flex: none; white-space: nowrap; }
 .resume-page .profile-form input, .resume-page .profile-form select { width: 100%; min-width: 0; }
 .resume-page .raw-text { overflow-wrap: anywhere; }
-.resume-page .resume-sections { margin: 20px 0; gap: 10px; }
-.resume-page .resume-sections > details { padding: 12px 16px; }
+.resume-imported { border-top: 1px solid var(--border); padding-top: 24px; }
+.resume-data-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; margin-bottom: 14px; }
+.resume-data-heading a { color: var(--muted); font-size: 13px; }
+.resume-data-heading a:hover { color: var(--accent); }
+.resume-page .resume-sections { margin: 0; gap: 0; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.resume-page .resume-sections > details { padding: 0; border: 0; border-radius: 0; }
+.resume-page .resume-sections > details + details { border-top: 1px solid var(--border); }
+.resume-page .resume-sections summary { padding: 14px 16px; font-size: 14px; color: var(--text); }
+.resume-page .resume-sections summary::marker { color: var(--muted); font-size: 11px; }
+.resume-page .resume-sections summary:hover { background: var(--panel-2); }
+.resume-page .resume-sections .raw-text, .resume-page .resume-sections .tags, .resume-page .resume-sections .plain-list { margin: 12px 16px 16px; }
+.resume-section-count { display: inline-block; margin-left: 8px; padding: 0 7px; background: var(--panel-2); border-radius: 5px; color: var(--muted); font-size: 12px; }
 .resume-source { border-top: 1px solid var(--border); padding-top: 16px; margin-bottom: 0; }
 .history-page :focus-visible, .resume-page :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 @media (max-width: 760px) {
   .page-heading { align-items: flex-start; flex-direction: column; }
   .history-item { grid-template-columns: minmax(0, 1fr); gap: 18px; padding: 20px; }
   .history-status { grid-row: 1; flex-direction: row; align-items: center; justify-content: space-between; gap: 10px; }
-  .resume-workspace { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+  .resume-workspace { gap: 20px; }
+  .resume-query-row { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .profile-toolbar { flex-direction: column; align-items: stretch; gap: 16px; }
+  .resume-page .profile-form { flex-basis: auto; }
   .resume-import { scroll-margin-top: 160px; }
 }
 @media (max-width: 480px) {
@@ -571,5 +608,38 @@ body.console-resizing { cursor: ns-resize; user-select: none; }
   .resume-import-form { grid-template-columns: minmax(0, 1fr); }
   .resume-import-form button { margin-top: 4px; }
   .resume-actions { flex-wrap: wrap; }
+  .resume-page .profile-form { flex-direction: column; align-items: stretch; }
+  .resume-title { font-size: 18px; }
+  .resume-page .resume-form-actions button, .resume-page .profile-form button { width: 100%; }
   .history-status { flex-wrap: wrap; text-align: left; }
+}
+
+/* Owner login and remote account screens. */
+.owner-login { max-width: 420px; margin: 10vh auto; padding: 28px; background: var(--panel); border: 1px solid var(--border); border-radius: 16px; }
+.owner-login h1 { font-size: 24px; margin: 24px 0 8px; }
+.owner-login form { display: grid; gap: 12px; margin-top: 24px; }
+.owner-login input { width: 100%; }
+.owner-logout { display: flex; align-items: center; margin: 0 8px; }
+.account-screen-dialog { width: min(1400px, 96vw); max-width: none; height: 92dvh; max-height: none; padding: 0; border: 1px solid var(--border); border-radius: 14px; background: var(--panel); color: var(--text); }
+.account-screen-dialog::backdrop { background: #000a; }
+body:has(.account-screen-dialog[open]) { overflow: hidden; }
+html:has(.account-screen-page) { scrollbar-gutter: auto; overflow: hidden; }
+.account-screen-dialog iframe { display: block; width: 100%; height: 100%; border: 0; }
+.screen-dialog-close { position: absolute; top: 4px; right: 4px; z-index: 2; font-size: 22px; line-height: 24px; padding: 4px 10px; }
+.account-screen-page { height: 100dvh; padding: 0; display: flex; flex-direction: column; overflow: hidden; }
+.account-screen-toolbar { display: flex; flex-shrink: 0; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 48px 10px 18px; background: var(--panel); }
+.account-screen-toolbar strong { font-size: 18px; }
+.account-screen-toolbar p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+.screen-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+#screen-paste-dialog h2 { margin: 0; }
+#screen-paste-dialog label { display: block; margin-bottom: 6px; }
+#screen-paste-text { width: 100%; }
+#screen-paste-error { color: var(--danger); }
+.account-screen-hint { font-size: 13px; margin: 0; padding: 8px 18px 12px; color: var(--muted); }
+#remote-screen { flex: 1; min-height: 0; overflow: hidden; background: #15171a; }
+#remote-keyboard { position: fixed; width: 1px; height: 1px; bottom: 0; left: 0; opacity: 0; padding: 0; border: 0; }
+@media (max-width: 760px) {
+  .owner-login { margin: 8vh 16px; }
+  .account-screen-dialog { width: 100vw; height: 100dvh; margin: 0; border: 0; border-radius: 0; }
+  .account-screen-toolbar { flex-direction: column; align-items: flex-start; gap: 8px; }
 }

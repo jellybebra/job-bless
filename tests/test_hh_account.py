@@ -84,7 +84,7 @@ async def test_automatic_login_finishes_without_manual_confirmation(monkeypatch)
                           raise_if_stopped=Mock())
     identity = {"logged_in": True, "account_name": "Анна Петрова"}
     monkeypatch.setattr(jobs, "read_hh_account", AsyncMock(return_value=identity))
-    page = SimpleNamespace(goto=AsyncMock())
+    page = SimpleNamespace(goto=AsyncMock(), is_closed=lambda: False)
     assert await asyncio.wait_for(jobs._wait_for_hh_login(ctx, page), 1) == identity
     page.goto.assert_not_awaited()
 
@@ -92,7 +92,7 @@ async def test_automatic_login_finishes_without_manual_confirmation(monkeypatch)
 async def test_manual_confirmation_is_not_proof_of_login(monkeypatch):
     monkeypatch.setattr(jobs, "read_hh_account", AsyncMock(return_value={"logged_in": False, "account_name": ""}))
     ctx = SimpleNamespace(wait_for_confirmation=AsyncMock(return_value=True), raise_if_stopped=Mock())
-    page = SimpleNamespace(goto=AsyncMock(), locator=Mock(return_value=SimpleNamespace(
+    page = SimpleNamespace(goto=AsyncMock(), is_closed=lambda: False, locator=Mock(return_value=SimpleNamespace(
         first=SimpleNamespace(wait_for=AsyncMock()),
     )))
     with pytest.raises(ValueError, match="Вход в hh.ru не подтверждён"):
@@ -110,13 +110,19 @@ async def test_stopping_login_cancels_confirmation_watcher(monkeypatch):
 
     monkeypatch.setattr(jobs, "read_hh_account", AsyncMock(return_value={"logged_in": False, "account_name": ""}))
     ctx = SimpleNamespace(wait_for_confirmation=AsyncMock(side_effect=wait_for_user), raise_if_stopped=Mock())
-    task = asyncio.create_task(jobs._wait_for_hh_login(ctx, Mock()))
+    task = asyncio.create_task(jobs._wait_for_hh_login(ctx, Mock(is_closed=Mock(return_value=False))))
     await asyncio.sleep(0)
     await asyncio.sleep(0)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
     assert finished.is_set()
+
+
+async def test_browser_restart_interrupts_login_instead_of_waiting_fifteen_minutes():
+    ctx = SimpleNamespace(wait_for_confirmation=AsyncMock(), raise_if_stopped=Mock())
+    with pytest.raises(RuntimeError, match="перезапущен"):
+        await jobs._wait_for_hh_login(ctx, SimpleNamespace(is_closed=lambda: True))
 
 
 @pytest.mark.parametrize("switch_account", [False, True])
@@ -129,12 +135,10 @@ async def test_switch_keeps_original_session_until_verified(
                               storage_state=AsyncMock(return_value={'cookies': [], 'origins': []}))
     isolated = SimpleNamespace(pages=[], new_page=AsyncMock(return_value=page), close=AsyncMock())
     browser = SimpleNamespace(contexts=[context], new_context=AsyncMock(return_value=isolated))
-    pw = SimpleNamespace(chromium=SimpleNamespace(connect_over_cdp=AsyncMock(return_value=browser)))
     manager = AsyncMock()
-    manager.__aenter__.return_value = pw
-    monkeypatch.setattr(jobs, "async_playwright", Mock(return_value=manager))
-    monkeypatch.setattr(jobs, "ensure_browser", AsyncMock(return_value=BrowserConfig()))
-    monkeypatch.setattr(jobs, "STORAGE_STATE_PATH", str(tmp_path / "storage.json"))
+    manager.__aenter__.return_value = (browser, browser.contexts[0])
+    monkeypatch.setattr(jobs.SESSION, "connection", Mock(return_value=manager))
+    monkeypatch.setattr(jobs, "ensure_browser", AsyncMock(return_value=BrowserConfig(storage_state_path=str(tmp_path / "storage.json"))))
     importer = AsyncMock(return_value={"found": 2, "imported": 2, "failed": 0})
     monkeypatch.setattr(jobs, "resume_import_job", importer)
     identity = {"logged_in": True, "account_name": "Анна Петрова"}
@@ -153,7 +157,7 @@ async def test_switch_keeps_original_session_until_verified(
 
     monkeypatch.setattr(jobs, "_wait_for_hh_login", verify)
     ctx = SimpleNamespace(state=SimpleNamespace(params={"switch_account": switch_account}),
-                          log=Mock(), raise_if_stopped=Mock())
+                          log=Mock(), raise_if_stopped=Mock(), repository=AsyncMock())
     if login_succeeds:
         result = await jobs.login_job(ctx)
         assert result["account_name"] == "Анна Петрова"
@@ -191,19 +195,16 @@ async def test_existing_hh_tab_is_reused_without_closing_it(monkeypatch, tmp_pat
     unrelated.is_closed.return_value = False
     context = SimpleNamespace(pages=[page, unrelated], new_page=AsyncMock(),
                               storage_state=AsyncMock(return_value={'cookies': [], 'origins': []}))
-    pw = SimpleNamespace(chromium=SimpleNamespace(connect_over_cdp=AsyncMock(
-        return_value=SimpleNamespace(contexts=[context]),
-    )))
+    browser = SimpleNamespace(contexts=[context])
     manager = AsyncMock()
-    manager.__aenter__.return_value = pw
-    monkeypatch.setattr(jobs, "async_playwright", Mock(return_value=manager))
-    monkeypatch.setattr(jobs, "ensure_browser", AsyncMock(return_value=BrowserConfig()))
-    monkeypatch.setattr(jobs, "STORAGE_STATE_PATH", str(tmp_path / "storage.json"))
+    manager.__aenter__.return_value = (browser, browser.contexts[0])
+    monkeypatch.setattr(jobs.SESSION, "connection", Mock(return_value=manager))
+    monkeypatch.setattr(jobs, "ensure_browser", AsyncMock(return_value=BrowserConfig(storage_state_path=str(tmp_path / "storage.json"))))
     identity = {"logged_in": True, "account_name": "Анна Петрова"}
     monkeypatch.setattr(jobs, "read_hh_account", AsyncMock(return_value=identity if already_logged_in else {"logged_in": False}))
     waiting = AsyncMock(return_value=identity)
     monkeypatch.setattr(jobs, "_wait_for_hh_login", waiting)
-    ctx = SimpleNamespace(state=SimpleNamespace(params={}), log=Mock(), raise_if_stopped=Mock())
+    ctx = SimpleNamespace(state=SimpleNamespace(params={}), log=Mock(), raise_if_stopped=Mock(), repository=AsyncMock())
     assert (await jobs.login_job(ctx))["logged_in"] is True
     context.new_page.assert_not_awaited()
     page.close.assert_not_awaited()
@@ -268,12 +269,10 @@ async def test_cancel_before_new_login_keeps_original_profile(monkeypatch, tmp_p
     original = SimpleNamespace(pages=[], clear_cookies=AsyncMock(), storage_state=AsyncMock())
     isolated = SimpleNamespace(pages=[], new_page=AsyncMock(return_value=page), close=AsyncMock())
     browser = SimpleNamespace(contexts=[original], new_context=AsyncMock(return_value=isolated))
-    pw = SimpleNamespace(chromium=SimpleNamespace(connect_over_cdp=AsyncMock(return_value=browser)))
     manager = AsyncMock()
-    manager.__aenter__.return_value = pw
-    monkeypatch.setattr(jobs, 'async_playwright', Mock(return_value=manager))
-    monkeypatch.setattr(jobs, 'ensure_browser', AsyncMock(return_value=BrowserConfig()))
-    monkeypatch.setattr(jobs, 'STORAGE_STATE_PATH', str(tmp_path / 'session.json'))
+    manager.__aenter__.return_value = (browser, browser.contexts[0])
+    monkeypatch.setattr(jobs.SESSION, 'connection', Mock(return_value=manager))
+    monkeypatch.setattr(jobs, 'ensure_browser', AsyncMock(return_value=BrowserConfig(storage_state_path=str(tmp_path / "storage.json"))))
     monkeypatch.setattr(jobs, '_wait_for_hh_login', AsyncMock(side_effect=asyncio.CancelledError))
     ctx = SimpleNamespace(state=SimpleNamespace(params={'switch_account': True}), log=Mock(), raise_if_stopped=Mock())
     with pytest.raises(asyncio.CancelledError):

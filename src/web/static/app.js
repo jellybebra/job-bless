@@ -1,9 +1,70 @@
+// Authentication applies to htmx actions and ordinary HTML forms alike.
+(function () {
+  const csrf = document.querySelector('meta[name="csrf-token"]')?.content || '';
+  document.addEventListener('htmx:configRequest', event => {
+    if (csrf) event.detail.headers['X-CSRF-Token'] = csrf;
+  });
+  function prepareForms() {
+    if (!csrf) return;
+    document.querySelectorAll('form').forEach(form => {
+      if (form.querySelector('[name="csrf_token"]')) return;
+      const input = document.createElement('input');
+      input.type = 'hidden'; input.name = 'csrf_token'; input.value = csrf;
+      form.appendChild(input);
+    });
+  }
+  prepareForms();
+  document.body.addEventListener('htmx:afterSwap', prepareForms);
+
+  const dialog = document.getElementById('account-screen-dialog');
+  const frame = document.getElementById('account-screen-frame');
+  if (!dialog || !frame) return;
+  let provider = '', googleOpened = false;
+  function show(name) {
+    if (!['hh', 'google'].includes(name) || dialog.open) return;
+    provider = name;
+    frame.src = `/accounts/${name}`;
+    dialog.showModal();
+  }
+  function dismiss() {
+    dialog.close();
+    frame.removeAttribute('src');
+    provider = '';
+    if (document.getElementById('task-panel')) window.htmx?.ajax('GET', '/partials/status', {target: '#task-panel', swap: 'outerHTML'});
+  }
+  async function close() {
+    if (!provider) return dismiss();
+    try {
+      await fetch(`/accounts/${provider}/close`, {method: 'POST', headers: {'X-CSRF-Token': csrf}});
+    } finally { dismiss(); }
+  }
+  document.getElementById('account-screen-dismiss').addEventListener('click', close);
+  dialog.addEventListener('cancel', event => { event.preventDefault(); close(); });
+  document.body.addEventListener('openAccountScreen', event => show(event.detail.provider));
+  document.body.addEventListener('hhLoggedOut', () => { if (provider === 'hh') dismiss(); });
+  document.body.addEventListener('click', event => {
+    const button = event.target.closest('[data-account-screen]');
+    if (button) show(button.dataset.accountScreen);
+  });
+  function checkGoogleLogin() {
+    const button = document.querySelector('[data-account-screen="google"]');
+    if (!button) googleOpened = false;
+    else if (!googleOpened && !dialog.open) { googleOpened = true; show('google'); }
+  }
+  document.body.addEventListener('htmx:afterSwap', checkGoogleLogin);
+  checkGoogleLogin();
+  window.addEventListener('message', event => {
+    if (event.origin === window.location.origin && event.source === frame.contentWindow
+        && event.data?.type === 'job-bless-screen-closed') dismiss();
+  });
+})();
+
 // Live task updates over SSE: append log lines, refresh the task panel.
 (function () {
   document.querySelectorAll('[data-exit-app]').forEach(button => button.addEventListener('click', async () => {
     button.disabled = true;
     try {
-      const response = await fetch('/desktop/exit', {method: 'POST'});
+      const response = await fetch('/desktop/exit', {method: 'POST', headers: {'X-CSRF-Token': document.querySelector('meta[name=csrf-token]')?.content || ''}});
       if (!response.ok) throw new Error('Exit failed');
       document.getElementById('mobile-navigation')?.close();
       document.querySelector('main').innerHTML = '<p role="status">job-bless завершает работу. Эту вкладку можно закрыть.</p>';
@@ -280,13 +341,17 @@
         if (data.task) updateProgress(data.task);
         // The panel itself changes when a job starts waiting for confirmation.
         if (data.task && data.task.awaiting_confirmation) refreshPanel();
+      } else if (data.type === "hh_logged_out") {
+        document.body.dispatchEvent(new Event('hhLoggedOut'));
+        refreshPanel();
       } else if (data.type === "started" || data.type === "finished" || data.type === "stopping" || data.type === "dismissed") {
         refreshPanel();
         if (data.type === "finished") {
           // Numbers on the current page are stale once a job finishes.
           clearTimeout(reloadTimer);
           reloadTimer = setTimeout(function () {
-            if (document.querySelector('.pipeline-dialog[open]')) refreshAfterDialog = true;
+            if (document.getElementById('account-screen-dialog')?.open) refreshPanel();
+            else if (document.querySelector('.pipeline-dialog[open]')) refreshAfterDialog = true;
             else window.location.reload();
           }, 1200);
         }

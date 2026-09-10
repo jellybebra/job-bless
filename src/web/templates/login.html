@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Вход — job-bless</title>
+  <link rel="stylesheet" href="/static/app.css?v={{ static_version }}">
+</head>
+<body>
+  <main class="owner-login">
+    <a class="brand" href="/">job<span>-bless</span></a>
+    <h1>Ваша рабочая панель</h1>
+    <p class="muted">Войдите, чтобы подключить аккаунты и управлять поиском работы.</p>
+    {% if request.app.state.auth.config.password_hash %}
+    <form method="post" action="/login">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label for="owner-password">Пароль панели</label>
+      <input type="password" id="owner-password" name="password" autocomplete="current-password" required autofocus maxlength="1024">
+      {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+      <button type="submit" class="primary">Войти</button>
+    </form>
+    {% else %}
+    <p>Откройте job-bless через ярлык приложения или личную ссылку из журнала запуска.</p>
+    {% endif %}
+  </main>
+</body>
+</html>
