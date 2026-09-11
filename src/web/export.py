@@ -12,6 +12,11 @@ COLUMNS = (
     ("work_format", "Формат работы"), ("schedule", "График"),
     ("experience", "Опыт"), ("employment_type", "Занятость"),
     ("snippet", "Описание карточки"), ("skills", "Навыки"),
+    ("full_description", "Полное описание вакансии"),
+    ("published_at", "Дата публикации"), ("archived", "В архиве"),
+    ("response_letter_required", "Обязательное сопроводительное письмо"),
+    ("has_test", "Тест или анкета"),
+    ("details_fetched_at", "Подробности проверены"), ("details_error", "Ошибка загрузки подробностей"),
     ("raw_text", "Текст карточки"), ("score", "Оценка"),
     ("verdict", "Обоснование оценки"), ("matched_skills", "Совпавшие навыки"),
     ("missing_skills", "Недостающие навыки"), ("application_status", "Статус отклика"),
@@ -23,6 +28,8 @@ COLUMNS = (
 def _cell(value):
     if value is None:
         return ""
+    if isinstance(value, bool):
+        return "Да" if value else "Нет"
     if isinstance(value, list):
         value = ", ".join(str(item) for item in value)
     if isinstance(value, str) and value.lstrip().startswith(("=", "+", "-", "@")):
@@ -53,4 +60,6 @@ def vacancy_csv(rows):
                 raw = {}
         details = raw if isinstance(raw, dict) else {}
         values = {**details, **row}
+        if row.get("key_skills") is not None:
+            values["skills"] = row["key_skills"]
         yield line([_cell(values.get(key)) for key, _ in COLUMNS])

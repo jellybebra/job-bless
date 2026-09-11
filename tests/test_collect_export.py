@@ -14,11 +14,22 @@ from fastapi.testclient import TestClient
 from src.config import Config
 from src.db.models import (
     ApplicationStatus, PageCommitParams, Resume, SearchRun, TaskKind,
-    VacancyApplication, VacancyCard, VacancyScore,
+    VacancyApplication, VacancyCard, VacancyScore, VacancyDetails,
 )
 from src.web import jobs
 from src.web.app import create_app
 from src.web.tasks import TaskContext, TaskState
+
+
+@pytest.fixture(autouse=True)
+def detail_reader(monkeypatch):
+    class Reader:
+        def __init__(self, *args, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *exc): pass
+        async def read(self, card):
+            return VacancyDetails(full_description='Full vacancy', fetched_at='2026-09-11T10:00:00+00:00')
+    monkeypatch.setattr(jobs, 'VacancyDetailsReader', Reader)
 
 
 @pytest.fixture

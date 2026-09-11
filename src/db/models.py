@@ -213,6 +213,18 @@ class VacancyCard:
 
 
 @dataclass
+class VacancyDetails:
+    full_description: str = ""
+    key_skills: Optional[List[str]] = None
+    published_at: str = ""
+    archived: Optional[bool] = None
+    response_letter_required: Optional[bool] = None
+    has_test: Optional[bool] = None
+    fetched_at: str = ""
+    error: str = ""
+
+
+@dataclass
 class CollectionSummary:
     task_id: str
     total_pages_processed: int = 0
