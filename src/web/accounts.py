@@ -90,6 +90,11 @@ async def open_screen(provider: str, request: Request):
     session = state.auth.session(request)
     if not session:
         raise HTTPException(401, "Войдите в панель")
+    from src.workspace import wake_browser
+    try:
+        await wake_browser(provider)
+    except RuntimeError as error:
+        raise HTTPException(503, str(error)) from error
     async with state.screens.lock:
         if provider == "google":
             if state.tasks.is_busy or state.tasks.lane(LANE_PROFILE).is_busy:

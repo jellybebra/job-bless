@@ -62,6 +62,8 @@ class RemoteAIStudioRuntime(AIStudioRuntime):
         try:
             if not self.available:
                 raise RuntimeErrorWithHint("Не настроен сервис Google AI Studio.")
+            from src.workspace import wake_browser
+            await wake_browser("google")
             self.settings.managed_llm = None
             await self._request("POST", "/control/connect", json={
                 "login": login, "model": str(self.settings.get("llm.model", "")),

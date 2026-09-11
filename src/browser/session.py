@@ -107,6 +107,8 @@ class SharedBrowserSession:
     async def _connect(self, config: BrowserConfig) -> None:
         self._config = config
         try:
+            from src.workspace import wake_browser
+            await wake_browser("hh")
             self._playwright = await async_playwright().start()
             self._browser = await connect_browser(self._playwright, config)
             self._context = await self._pick_context()

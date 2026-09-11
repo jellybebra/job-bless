@@ -71,6 +71,9 @@ class WebConfig:
     require_auth: bool = False
     public_url: str = ""
     secure_cookies: bool = False
+    workspace_token: str = ""
+    workspace_user_id: str = ""
+    clerk_publishable_key: str = ""
 
 
 @dataclass
@@ -227,6 +230,9 @@ class Config:
             require_auth=os.getenv("WEB_REQUIRE_AUTH", str(web_data.get("require_auth", False))).lower() in ("true", "1"),
             public_url=os.getenv("WEB_PUBLIC_URL", web_data.get("public_url", "")).rstrip("/"),
             secure_cookies=os.getenv("WEB_SECURE_COOKIES", str(web_data.get("secure_cookies", False))).lower() in ("true", "1"),
+            workspace_token=os.getenv("WORKSPACE_TOKEN", ""),
+            workspace_user_id=os.getenv("WORKSPACE_USER_ID", ""),
+            clerk_publishable_key=os.getenv("CLERK_PUBLISHABLE_KEY", ""),
         )
 
         accounts_cfg = RemoteAccountsConfig(

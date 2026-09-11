@@ -1,0 +1,39 @@
+# Standalone multi-user deployment. Add compose.traefik.yml for HTTPS.
+# Pull all three worker images before starting this gateway.
+services:
+  app:
+    image: ${JOB_BLESS_IMAGE_PREFIX:-ghcr.io/jellybebra/job-bless}-app:${JOB_BLESS_IMAGE_TAG:-latest}
+    container_name: ${GATEWAY_CONTAINER:-job-bless-gateway}
+    command: [python, -m, src.web.gateway]
+    user: "0:0"
+    init: true
+    restart: unless-stopped
+    mem_limit: 384m
+    cpus: 1.0
+    ports:
+      - "${WEB_BIND:-127.0.0.1}:${WEB_PORT:-8080}:8080"
+    environment:
+      WEB_PORT: 8080
+      WEB_PUBLIC_URL: ${WEB_PUBLIC_URL:?Set the public origin}
+      CLERK_PUBLISHABLE_KEY: ${CLERK_PUBLISHABLE_KEY:?Set Clerk publishable key}
+      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY:?Set Clerk secret key}
+      CLERK_OWNER_EMAIL: ${CLERK_OWNER_EMAIL:-}
+      WORKSPACES_HOST_ROOT: ${WORKSPACES_HOST_ROOT:?Set an absolute directory on the Docker host}
+      WORKSPACES_ROOT: /workspaces
+      GATEWAY_CONTAINER: ${GATEWAY_CONTAINER:-job-bless-gateway}
+      JOB_BLESS_IMAGE_PREFIX: ${JOB_BLESS_IMAGE_PREFIX:-ghcr.io/jellybebra/job-bless}
+      JOB_BLESS_IMAGE_TAG: ${JOB_BLESS_IMAGE_TAG:-latest}
+      GOOGLE_PROXY_URL: ${GOOGLE_PROXY_URL:-}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${WORKSPACES_HOST_ROOT}:/workspaces
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"

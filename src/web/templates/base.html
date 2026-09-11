@@ -7,6 +7,7 @@
   <title>{% block title %}job-bless{% endblock %}</title>
   <link rel="stylesheet" href="/static/app.css?v={{ static_version }}">
   <script src="/static/htmx.min.js" defer></script>
+  {% include 'partials/clerk.html' %}
 </head>
 <body class="{{ 'with-console' if path == '/actions' }}">
 {% macro navigation_links() %}
@@ -14,7 +15,8 @@
     <a href="{{ url }}" class="{{ 'active' if path == url }}" {% if path == url %}aria-current="page"{% endif %}>{{ title }}</a>
   {% endfor %}
   {% if desktop_mode %}<button type="button" class="link desktop-exit" data-exit-app>Завершить работу</button>{% endif %}
-  {% if request.app.state.auth.enabled %}<form method="post" action="/logout" class="owner-logout">{% include 'partials/csrf_input.html' %}<button type="submit" class="link">Выйти</button></form>{% endif %}
+  {% if clerk_publishable_key %}<span data-clerk-user aria-label="Мой аккаунт"></span>
+  {% elif request.app.state.auth.enabled %}<form method="post" action="/logout" class="owner-logout">{% include 'partials/csrf_input.html' %}<button type="submit" class="link">Выйти</button></form>{% endif %}
 {% endmacro %}
 <header class="topbar">
   <button type="button" class="mobile-menu-toggle" aria-label="Открыть меню" aria-controls="mobile-navigation" aria-expanded="false">
