@@ -15,8 +15,7 @@
     <a href="{{ url }}" class="{{ 'active' if path == url }}" {% if path == url %}aria-current="page"{% endif %}>{{ title }}</a>
   {% endfor %}
   {% if desktop_mode %}<button type="button" class="link desktop-exit" data-exit-app>Завершить работу</button>{% endif %}
-  {% if clerk_publishable_key %}<span data-clerk-user aria-label="Мой аккаунт"></span>
-  {% elif request.app.state.auth.enabled %}<form method="post" action="/logout" class="owner-logout">{% include 'partials/csrf_input.html' %}<button type="submit" class="link">Выйти</button></form>{% endif %}
+  {% if not clerk_publishable_key and request.app.state.auth.enabled %}<form method="post" action="/logout" class="owner-logout">{% include 'partials/csrf_input.html' %}<button type="submit" class="link">Выйти</button></form>{% endif %}
 {% endmacro %}
 <header class="topbar">
   <button type="button" class="mobile-menu-toggle" aria-label="Открыть меню" aria-controls="mobile-navigation" aria-expanded="false">
@@ -24,6 +23,7 @@
   </button>
   <a class="brand" href="/actions">job<span>-bless</span></a>
   <nav class="desktop-navigation" aria-label="Основная навигация">{{ navigation_links() }}</nav>
+  {% if clerk_publishable_key %}<span class="topbar-profile" data-clerk-user aria-label="Мой аккаунт"></span>{% endif %}
 </header>
 <dialog class="navigation-drawer" id="mobile-navigation" aria-labelledby="mobile-navigation-title">
   <div class="navigation-drawer-heading">
