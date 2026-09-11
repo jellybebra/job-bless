@@ -103,22 +103,47 @@ async def test_reader_checks_stop_after_rate_limit_before_navigation():
     reader.page.goto.assert_not_awaited()
 
 
-async def test_reader_retries_same_vacancy_after_browser_crash(monkeypatch):
+@pytest.mark.parametrize('external_id', ['42', '137106403'])
+async def test_reader_retries_same_vacancy_after_browser_crash(monkeypatch, external_id):
     from playwright.async_api import Error
     from src.collector import detail_parser
     monkeypatch.setattr(detail_parser, 'asyncio', SimpleNamespace(sleep=AsyncMock()))
     reader = VacancyDetailsReader(BrowserConfig(), limiter=None, should_stop=lambda: False)
-    reader.page = SimpleNamespace(url='https://hh.ru/vacancy/42')
+    reader.page = SimpleNamespace(url=f'https://hh.ru/vacancy/{external_id}')
     connection = SimpleNamespace(__aexit__=AsyncMock())
     reader.connection = connection
-    result = parse_details(snapshot(), '42')
+    result = parse_details(snapshot(vacancy_id=int(external_id)), external_id)
     reader._read = AsyncMock(side_effect=[Error('Page.goto: Target crashed'), result])
-    card = VacancyCard(external_id='42', url='https://hh.ru/vacancy/42')
+    card = VacancyCard(external_id=external_id, url=f'https://hh.ru/vacancy/{external_id}')
     assert await reader.read(card) is result
     assert reader._read.await_count == 2
     assert all(call.args == (card,) for call in reader._read.await_args_list)
     connection.__aexit__.assert_awaited_once()
     assert reader.page is None
+
+
+async def test_reader_releases_successful_document_before_next_vacancy():
+    reader = VacancyDetailsReader(BrowserConfig(), limiter=None, should_stop=lambda: False)
+    connection = SimpleNamespace(__aexit__=AsyncMock())
+    reader.connection = connection
+    reader.page = object()
+    reader._read = AsyncMock(return_value=parse_details(snapshot(), '42'))
+    result = await reader.read(VacancyCard(external_id='42', url='https://hh.ru/vacancy/42'))
+    assert result.full_description
+    connection.__aexit__.assert_awaited_once()
+    assert reader.page is None and reader.connection is None
+
+
+@pytest.mark.parametrize('url', ['https://hh.ru/403', 'https://hh.ru/error/403/', 'https://hh.kz/forbidden'])
+def test_real_forbidden_routes_still_require_intervention(url):
+    from src.browser.intervention import intervention_message
+    assert intervention_message(url)
+
+
+@pytest.mark.parametrize('url', ['https://hh.ru/vacancy/137106403', 'https://hh.ru/vacancy/4030123', 'https://hh.ru/search/vacancy?text=403'])
+def test_digits_in_vacancy_id_or_query_are_not_access_denied(url):
+    from src.browser.intervention import intervention_message
+    assert intervention_message(url) == ''
 
 
 async def test_reader_retry_wait_remains_stoppable(monkeypatch):

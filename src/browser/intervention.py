@@ -16,6 +16,6 @@ def intervention_message(url: str) -> str:
         return "HH просит пройти проверку. Откройте браузер HH в карточке аккаунта и решите капчу."
     if "/account/login" in address.path or "/account/signup" in address.path:
         return "HH требует входа. Откройте браузер HH в карточке аккаунта и войдите снова."
-    if "403" in address.path or "forbidden" in address.path:
+    if any(segment in ("403", "forbidden") for segment in address.path.split("/")):
         return "HH ограничил доступ. Откройте браузер HH и проверьте сообщение сайта."
     return ""

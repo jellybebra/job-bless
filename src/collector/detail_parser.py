@@ -143,7 +143,7 @@ def parse_details(data: dict, external_id: str) -> VacancyDetails:
 
 
 class VacancyDetailsReader:
-    """Reuse one extra tab while the collector keeps its search page open."""
+    """Keep at most one extra tab; release each document after reading it."""
 
     def __init__(self, browser_config, *, limiter, should_stop, on_retry=None):
         self.config = browser_config
@@ -177,7 +177,11 @@ class VacancyDetailsReader:
         failures = 0
         while True:
             try:
-                return await self._read(card)
+                result = await self._read(card)
+                # Long-lived HH tabs retain earlier documents and exhaust the
+                # browser container during a full page of vacancy details.
+                await self._release_page()
+                return result
             except Exception as error:
                 if not is_transient_browser_error(error):
                     raise
