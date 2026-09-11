@@ -1,5 +1,6 @@
 """Standalone collection and a complete, filtered download without live hh.ru."""
 
+import asyncio
 import csv
 import io
 import re
@@ -13,11 +14,22 @@ from fastapi.testclient import TestClient
 from src.config import Config
 from src.db.models import (
     ApplicationStatus, PageCommitParams, Resume, SearchRun, TaskKind,
-    VacancyApplication, VacancyCard, VacancyScore,
+    VacancyApplication, VacancyCard, VacancyScore, VacancyDetails,
 )
 from src.web import jobs
 from src.web.app import create_app
 from src.web.tasks import TaskContext, TaskState
+
+
+@pytest.fixture(autouse=True)
+def detail_reader(monkeypatch):
+    class Reader:
+        def __init__(self, *args, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *exc): pass
+        async def read(self, card):
+            return VacancyDetails(full_description='Full vacancy', fetched_at='2026-09-11T10:00:00+00:00')
+    monkeypatch.setattr(jobs, 'VacancyDetailsReader', Reader)
 
 
 @pytest.fixture
@@ -33,13 +45,13 @@ def client(tmp_path):
 def test_standalone_query_persists_and_empty_query_stays_empty(client):
     settings = client.app.state.settings
     response = client.post("/actions/search-settings", data={
-        "search_query": "  Аналитик & SQL  ", "scroller.max_pages": "3",
+        "search_query": "  Аналитик & SQL  ", "scroller.max_scroll_steps_per_page": "3",
     })
     assert "HX-Trigger-After-Settle" in response.headers
     client.portal.call(settings.load)
     assert settings.search_query == "Аналитик & SQL"
     assert parse_qs(urlparse(settings.scroller_config().search_url).query)["text"] == [settings.search_query]
-    assert settings.get("scroller.max_pages") == 3
+    assert settings.get("scroller.max_scroll_steps_per_page") == 3
     assert "Аналитик &amp; SQL" in client.get("/").text
     client.post("/actions/search-settings", data={"search_query": " "})
     client.portal.call(settings.load)
@@ -52,7 +64,7 @@ def test_invalid_settings_keep_query_and_stale_form_cannot_change_resume(client)
     settings = client.app.state.settings
     original = settings.search_query
     response = client.post("/actions/search-settings", data={
-        "search_query": "Новый запрос", "scroller.max_pages": "-1",
+        "search_query": "Новый запрос", "scroller.max_scroll_steps_per_page": "-1",
     })
     assert "HX-Trigger-After-Settle" not in response.headers
     assert 'value="Новый запрос"' in response.text
@@ -66,6 +78,34 @@ def test_invalid_settings_keep_query_and_stale_form_cannot_change_resume(client)
     assert "Активное резюме изменилось" in response.text
     assert client.portal.call(repo.get_active_resume).search_query == "Java"
     assert settings.search_query == original
+
+
+def test_select_standalone_keeps_resume_and_independent_queries(client):
+    repo, settings = client.app.state.repository, client.app.state.settings
+    rid = client.portal.call(repo.upsert_resume, Resume(
+        source_url='https://hh.ru/resume/saved', search_query='Java', context_text='Saved experience',
+    ))
+    client.portal.call(repo.set_active_resume, rid)
+    client.portal.call(settings.save_search_query, 'Аналитик')
+    response = client.post('/actions/resume/select', data={'resume_id': 0})
+    assert 'value="0" selected>Без резюме' in response.text
+    assert 'Ищем: «Аналитик»' in response.text
+    assert client.portal.call(repo.get_active_resume) is None
+    assert 'Выбран поиск без резюме' in client.get('/resume').text
+    # A search form opened before the switch cannot overwrite the other query.
+    stale = client.post('/actions/search-settings', data={'resume_id': rid, 'search_query': 'Stale'})
+    assert 'Активное резюме изменилось' in stale.text
+    client.post('/actions/search-settings', data={'search_query': 'SQL'})
+    client.portal.call(settings.load)
+    assert settings.search_query == 'SQL'
+    saved = client.portal.call(repo.get_resume, rid)
+    assert (saved.search_query, saved.context_text) == ('Java', 'Saved experience')
+    # Both selection controls can restore the saved resume.
+    response = client.post(f'/actions/resume/{rid}/activate')
+    assert response.status_code == 200
+    assert client.portal.call(repo.get_active_resume).id == rid
+    response = client.post('/actions/resume/select', data={'resume_id': 0})
+    assert 'Ищем: «SQL»' in response.text
 
 
 @pytest.mark.parametrize("with_resume", [False, True])
@@ -97,6 +137,7 @@ def test_collection_saves_cards_with_optional_resume(client, monkeypatch, with_r
     client.portal.call(jobs.collect_job, ctx)
     assert parse_qs(urlparse(seen["search_url"]).query)["text"] == ["Java" if with_resume else "Аналитик"]
     assert client.portal.call(repo.count_vacancies) == 1
+    assert ctx.state.done == 1 and ctx.state.total == 0
 
     async def read_run():
         async with repo.connection.execute("SELECT resume_id, status FROM search_runs") as cursor:
@@ -202,3 +243,34 @@ def test_browser_filter_form_allows_empty_minimum_score(client):
     assert len(_download(client, search="налитик", min_score="")) == 31
     for value in ("bad", "-1", "101", "1.5"):
         assert client.get("/vacancies", params={"min_score": value}).status_code == 422
+
+
+def test_stop_during_rate_limit_closes_search_run(client, monkeypatch):
+    manager = client.app.state.tasks
+    monkeypatch.setattr(jobs, "ensure_browser", AsyncMock(return_value=manager.settings.browser_config()))
+    async def cancelled_collect(self, **kwargs):
+        yield PageCommitParams(
+            search_run_id=kwargs["task_id"], page_key="1", page_number=1,
+            current_url=kwargs["search_url"], canonical_url=kwargs["search_url"],
+            cards=[VacancyCard(external_id="stop-test")],
+        )
+        raise asyncio.CancelledError("stopped while waiting for the rate limit")
+    monkeypatch.setattr(jobs.HHVacancyCardCollector, "collect", cancelled_collect)
+    ctx = TaskContext(manager, TaskState(id="cancel-collect", kind=TaskKind.COLLECT), manager.lane())
+    async def run_and_read():
+        with pytest.raises(asyncio.CancelledError):
+            await jobs.collect_job(ctx)
+        async with manager.repository.connection.execute(
+            "SELECT status, completion_reason FROM search_runs WHERE id = ?", ("web_cancel-collect",)
+        ) as cursor:
+            return tuple(await cursor.fetchone())
+    assert client.portal.call(run_and_read) == ("cancelled", "stopped_by_user")
+    assert client.portal.call(manager.repository.count_vacancies) == 1
+
+
+def test_unlimited_progress_shows_pages_without_percentage(client):
+    manager = client.app.state.tasks
+    manager.lane().current = TaskState(id="progress", kind=TaskKind.COLLECT, done=12)
+    page = client.get("/partials/status").text
+    assert 'Обработано страниц: 12 · без лимита' in page
+    assert 'id="task-bar"' not in page

@@ -36,7 +36,10 @@ def build_vacancy_text(row: Dict[str, Any]) -> str:
         except (json.JSONDecodeError, TypeError):
             raw = {}
 
-    skills = raw.get("skills") or []
+    skills = row.get("key_skills")
+    if skills is None:
+        skills = raw.get("skills") or []
+    description = row.get("full_description") or raw.get("snippet", "")
     tags = raw.get("tags") or []
     lines = [
         f"Название: {row.get('title') or raw.get('title', '')}",
@@ -49,7 +52,7 @@ def build_vacancy_text(row: Dict[str, Any]) -> str:
         f"Тип занятости: {row.get('employment_type') or raw.get('employment_type', '')}",
         f"Навыки в вакансии: {', '.join(str(s) for s in skills)}" if skills else "",
         f"Теги: {', '.join(str(t) for t in tags)}" if tags else "",
-        f"Описание: {raw.get('snippet', '')}" if raw.get("snippet") else "",
+        f"Описание: {description}" if description else "",
     ]
     text = "\n".join(line for line in lines if line and not line.endswith(": "))
     return text[:MAX_VACANCY_CHARS]

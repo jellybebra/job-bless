@@ -6,6 +6,7 @@
   <meta name="csrf-token" content="{{ request.state.csrf_token }}">
   <title>Вход в {{ title }} — job-bless</title>
   <link rel="stylesheet" href="/static/app.css?v={{ static_version }}">
+  {% include 'partials/clerk.html' %}
 </head>
 <body class="account-screen-page" data-provider="{{ provider }}">
   <header class="account-screen-toolbar">

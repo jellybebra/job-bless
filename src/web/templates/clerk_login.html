@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Мой аккаунт — job-bless</title>
+  <link rel="stylesheet" href="/static/app.css?v={{ static_version }}">
+  {% include 'partials/clerk.html' %}
+  <style>
+    body { padding-bottom: 0; }
+    .clerk-login { min-height: 100dvh; display: grid; place-content: center; padding: 24px; gap: 20px; }
+    .clerk-intro { max-width: 400px; text-align: center; }
+    .clerk-intro p { color: var(--muted, #94a3b8); line-height: 1.6; }
+    #clerk-sign-in { display: flex; justify-content: center; min-height: 180px; }
+  </style>
+</head>
+<body><main class="clerk-login">
+  <div class="clerk-intro"><a class="brand" href="/login">job<span>-bless</span></a>
+    <h1>Ваш поиск работы</h1><p>Свои вакансии, резюме и отклики.<br>Войдите или создайте личный аккаунт.</p>
+    <p id="clerk-status" role="status">Загружаем вход…</p>
+  </div>
+  <div id="clerk-sign-in"></div>
+</main></body></html>

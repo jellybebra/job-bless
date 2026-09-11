@@ -95,7 +95,7 @@ def test_action_modal_persists_only_its_own_settings(client, kind, values, expec
 
 @pytest.mark.parametrize('kind,values', [
     ('llm', {'llm.timeout_sec': '0', 'llm.enabled': '1'}),
-    ('search', {'scroller.max_pages': '0'}),
+    ('search', {'scroller.max_scroll_steps_per_page': '0'}),
     ('score', {'matching.batch_size': '0', 'matching.prompt': '<b>Сохранить мой текст</b>'}),
     ('profile', {'profile.max_chars': '0', 'profile.model': 'my-model'}),
     ('activity', {'activity.duration_min': '0', 'schedule.activity_enabled': '1'}),
@@ -127,7 +127,7 @@ def test_invalid_search_settings_do_not_change_query_or_resume_context(client):
         portal.call(repository.set_active_resume, resume_id)
     before = client.app.state.settings.all_values()
     response = client.post('/actions/search-settings', data={
-        'resume_id': str(resume_id), 'search_query': 'Go', 'scroller.max_pages': '0',
+        'resume_id': str(resume_id), 'search_query': 'Go', 'scroller.max_scroll_steps_per_page': '0',
     })
     assert 'value="Go"' in response.text and 'value="0"' in response.text
     assert 'HX-Trigger-After-Settle' not in response.headers
@@ -136,7 +136,7 @@ def test_invalid_search_settings_do_not_change_query_or_resume_context(client):
     assert resume.search_query == 'Python' and resume.context_text == 'My experience'
     assert client.app.state.settings.all_values() == before
     stale = client.post('/actions/search-settings', data={
-        'resume_id': str(resume_id + 1), 'search_query': 'Go', 'scroller.max_pages': '9',
+        'resume_id': str(resume_id + 1), 'search_query': 'Go', 'scroller.max_scroll_steps_per_page': '9',
     })
     assert 'Активное резюме изменилось' in stale.text
     assert client.app.state.settings.all_values() == before
@@ -179,6 +179,8 @@ def test_setup_section_and_resume_selection(client):
     from unittest.mock import patch
     with patch.object(client.app.state.tasks.lane(), 'task', SimpleNamespace(done=lambda: False)):
         blocked = client.post('/actions/resume/select', data={'resume_id': first})
+        standalone = client.post('/actions/resume/select', data={'resume_id': 0})
+        assert 'Дождитесь завершения текущего действия' in standalone.text
     assert 'Дождитесь завершения текущего действия' in blocked.text
     assert re.search(r'<select[^>]*id="active-resume"[^>]*disabled', blocked.text)
     with start_blocking_portal() as portal:

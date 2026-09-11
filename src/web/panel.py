@@ -58,6 +58,7 @@ async def panel_context(request: Request) -> dict:
         stages.append("отправка откликов работодателям")
     return {
         "panel_resume": resume,
+        "panel_standalone_search": (await request.app.state.repository.get_all_settings()).get("resume.selection") == "none",
         **llm_card_context(request),
         "panel_resumes": await request.app.state.repository.list_resumes(),
         "panel_search_query": resume.search_query if resume else settings.search_query,

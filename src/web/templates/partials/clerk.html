@@ -1,0 +1,5 @@
+{% if clerk_publishable_key %}
+<script defer crossorigin="anonymous" src="https://{{ clerk_host }}/npm/@clerk/ui@1/dist/ui.browser.js"></script>
+<script defer crossorigin="anonymous" data-clerk-publishable-key="{{ clerk_publishable_key }}" src="https://{{ clerk_host }}/npm/@clerk/clerk-js@6/dist/clerk.browser.js"></script>
+<script type="module" src="/static/clerk.js?v={{ static_version }}"></script>
+{% endif %}

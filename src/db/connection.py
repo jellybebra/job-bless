@@ -326,6 +326,25 @@ CREATE INDEX IF NOT EXISTS idx_task_runs_kind ON task_runs(kind, started_at);
 """
 
 
+# Keep fetched details separate: refreshing a search card must not erase them.
+VACANCY_DETAILS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS vacancy_details (
+    vacancy_id BIGINT PRIMARY KEY REFERENCES vacancies(id) ON DELETE CASCADE,
+    full_description TEXT NOT NULL DEFAULT '',
+    key_skills_json TEXT,
+    published_at TEXT NOT NULL DEFAULT '',
+    archived INTEGER,
+    response_letter_required INTEGER,
+    has_test INTEGER,
+    fetched_at TEXT NOT NULL DEFAULT '',
+    last_attempted_at TEXT NOT NULL DEFAULT '',
+    last_error TEXT NOT NULL DEFAULT ''
+);
+"""
+SQLITE_SCHEMA += VACANCY_DETAILS_SCHEMA
+POSTGRES_SCHEMA += VACANCY_DETAILS_SCHEMA
+
+
 # Columns added after the first release. `CREATE TABLE IF NOT EXISTS` never
 # touches an existing table, so they are applied separately and idempotently.
 ADDED_COLUMNS = (

@@ -1,4 +1,6 @@
 :root {
+  /* Native controls and Clerk's built-in theme follow the app palette. */
+  color-scheme: dark;
   --bg: #0f1115;
   --panel: #171a21;
   --panel-2: #1d212a;
@@ -14,6 +16,7 @@
 
 @media (prefers-color-scheme: light) {
   :root {
+    color-scheme: light;
     --bg: #f6f7fa;
     --panel: #ffffff;
     --panel-2: #f0f2f6;
@@ -55,6 +58,7 @@ code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; font-si
 .topbar nav a:hover { background: var(--panel-2); text-decoration: none; }
 .topbar nav a.active { background: var(--panel-2); color: var(--text); }
 .topbar .mobile-menu-toggle { display: none; }
+.topbar-profile { margin-left: auto; flex: 0 0 auto; display: flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; }
 .navigation-drawer {
   margin: 0; width: min(300px, calc(100vw - 48px)); max-width: none;
   height: 100dvh; max-height: none; overflow-y: auto;

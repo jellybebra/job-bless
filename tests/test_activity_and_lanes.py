@@ -306,14 +306,12 @@ def test_activity_pause_range_cannot_be_inverted(client):
     assert config.pause_max_sec >= config.pause_min_sec
 
 
-def test_max_pages_accepts_four_digits(client):
-    client.post("/actions/search-settings", data={"scroller.max_pages": "9999"}, follow_redirects=False)
-    assert client.app.state.settings.scroller_config().max_pages == 9999
-
-    rejected = client.post("/actions/search-settings", data={"scroller.max_pages": "10000"})
-    assert 'максимум' in rejected.text
-    assert 'HX-Trigger-After-Settle' not in rejected.headers
-    assert client.app.state.settings.scroller_config().max_pages == 9999
+def test_legacy_page_limit_is_ignored_and_hidden(client):
+    settings = client.app.state.settings
+    client.portal.call(client.app.state.repository.save_settings, {"scroller.max_pages": 1})
+    client.portal.call(settings.load)
+    assert not hasattr(settings.scroller_config(), "max_pages")
+    assert 'name="scroller.max_pages"' not in client.get("/actions").text
 
 
 # --- scheduler -----------------------------------------------------------

@@ -1,5 +1,8 @@
 # Сервер, вход в аккаунты и локальный Docker
 
+Для общего сервера с несколькими пользователями см. [режим Clerk](multiuser.md).
+Ниже описана личная установка.
+
 Личная установка для одного владельца, одного активного аккаунта HH и одного Google AI Studio.
 Откройте панель, введите её пароль и подключите аккаунты в разделе «Действия».
 Кнопки показывают настоящие браузеры на сервере: пароль, SMS, подтверждение Google и капчу
@@ -184,6 +187,25 @@ docker compose -f docker-compose.yml -f compose.server.yml up -d --no-build
 Caddy получает и обновляет TLS-сертификат автоматически. Панель находится на вашем домене.
 В этом режиме наружу опубликованы только порты Caddy; порт приложения снимается из публикации.
 Порты VNC, Playwright и Google API доступны только внутри Docker-сети.
+
+### Существующий Traefik
+
+Если сервер уже использует Traefik, вместо `compose.server.yml` подключите
+`compose.traefik.yml`. Нужны внешняя Docker-сеть `traefik-public`, точка входа
+`websecure` и резолвер сертификатов `letsencrypt`. Например, отдельный Traefik
+из [vless-docker](https://github.com/jellybebra/vless-docker) с Cloudflare DNS challenge;
+сервисы VLESS для приложения не требуются.
+
+```bash
+python3 scripts/configure_server.py --generate-password --domain jobs.example.com
+docker compose -f docker-compose.yml -f compose.traefik.yml pull
+docker compose -f docker-compose.yml -f compose.traefik.yml up -d --no-build
+```
+
+Traefik направляет HTTPS на порт 8080 приложения через общую сеть. Порт приложения
+не публикуется на хосте; HH и Google остаются в приватной сети стека.
+Публичный URL и Secure cookies задаются автоматически по `SITE_DOMAIN`.
+Для последующих команд обновления и остановки также указывайте оба файла Compose.
 
 Пароль панели хранится как PBKDF2-хеш. Сессия владельца действует 12 часов, после перезапуска
 приложения нужно войти снова. Cookies имеют HttpOnly/SameSite, в HTTPS-режиме также Secure.

@@ -14,8 +14,9 @@ from src.applier.cover_letter import build_writer
 from src.browser.account import HH_COOKIE_DOMAIN, LOGIN_SELECTORS, is_hh_url, read_hh_account
 from src.browser.connector import LIVE_PAGES, BrowserConnector
 from src.browser.session import SESSION, save_storage_state as _save_hh_session
-from src.browser.intervention import intervention_message
+from src.browser.intervention import HHInterventionRequired, intervention_message
 from src.collector.collector import HHVacancyCardCollector
+from src.collector.detail_parser import VacancyDetailsReader
 from src.config import BrowserConfig
 from src.db.models import (
     ApplicationStatus,
@@ -23,6 +24,7 @@ from src.db.models import (
     PageCommitParams,
     SearchRun,
     SearchRunStatus,
+    VacancyDetails,
 )
 from src.llm import create_llm_client
 from src.matching.scorer import VacancyScorer
@@ -92,7 +94,8 @@ async def collect_job(ctx: TaskContext) -> Dict[str, Any]:
     browser_config = await ensure_browser(ctx)
     run_id = f"web_{ctx.state.id}"
     ctx.log(f"сбор вакансий: {search_url}")
-    ctx.progress(0, scroller_config.max_pages)
+    ctx.log("собираю до конца выдачи или нажатия «Стоп», без лимита страниц")
+    ctx.progress(0)
 
     await ctx.repository.create_search_run(
         SearchRun(
@@ -125,18 +128,43 @@ async def collect_job(ctx: TaskContext) -> Dict[str, Any]:
         limiter=ctx.limiter,
     )
 
+    detailed = detail_errors = 0
+    reader = VacancyDetailsReader(browser_config, limiter=ctx.limiter, should_stop=ctx.should_stop)
     try:
-        async for item in stream:
-            if isinstance(item, PageCommitParams):
-                await ctx.repository.commit_page_transaction(item)
-                pages += 1
-                ctx.log(f"страница #{item.page_number}: сохранено карточек {len(item.cards)}")
-                ctx.progress(pages, scroller_config.max_pages)
-            elif isinstance(item, CollectionSummary):
-                summary = item
+        async with reader:
+            async for item in stream:
+                if isinstance(item, PageCommitParams):
+                    # Commit the whole result page first. A detail failure or stop
+                    # must never lose cards we have already discovered.
+                    await ctx.repository.commit_page_transaction(item)
+                    pages += 1
+                    ctx.log(f"страница #{item.page_number}: сохранено карточек {len(item.cards)}")
+                    ctx.progress(pages)
+                    for index, card in enumerate(item.cards, 1):
+                        if ctx.should_stop():
+                            break
+                        ctx.log(f"подробности {index}/{len(item.cards)} на странице {pages}: {card.title}")
+                        try:
+                            details = await reader.read(card)
+                        except HHInterventionRequired:
+                            raise
+                        except Exception as error:
+                            details = VacancyDetails(error=str(error)[:300])
+                            detail_errors += 1
+                            ctx.log(f"не удалось прочитать вакансию {card.external_id}: {details.error}")
+                        else:
+                            detailed += 1
+                        await ctx.repository.save_vacancy_details(card.source, card.external_id, details)
+                elif isinstance(item, CollectionSummary):
+                    summary = item
 
-            if ctx.should_stop():
-                collector.stop()
+                if ctx.should_stop():
+                    collector.stop()
+    except asyncio.CancelledError:
+        await ctx.repository.update_search_run_status(
+            run_id, status=SearchRunStatus.CANCELLED, reason="stopped_by_user"
+        )
+        raise
     except Exception as e:
         await ctx.repository.update_search_run_status(
             run_id, status=SearchRunStatus.FAILED, error_code="ERR_COLLECT", error_message=str(e)
@@ -156,9 +184,11 @@ async def collect_job(ctx: TaskContext) -> Dict[str, Any]:
         "cards": summary.total_cards_found if summary else 0,
         "unique": summary.unique_vacancies if summary else 0,
         "reason": summary.completion_reason if summary else "",
+        "detailed": detailed,
+        "detail_errors": detail_errors,
         "rate_limit": ctx.limiter.stats.as_dict(),
     }
-    ctx.log(f"собрано уникальных вакансий: {result['unique']} со страниц: {result['pages']}")
+    ctx.log(f"собрано уникальных вакансий: {result['unique']} со страниц: {result['pages']}; подробностей: {detailed}, ошибок чтения: {detail_errors}")
     return result
 
 

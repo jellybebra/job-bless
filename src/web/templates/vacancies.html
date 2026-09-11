@@ -47,6 +47,24 @@
           <h2 id="vacancy-title-{{ row.id }}"><a href="{{ row.canonical_url }}" target="_blank" rel="noopener">{{ row.title }}</a></h2>
           <p class="vacancy-company">{{ row.company_name or 'Компания не указана' }}{% if row.city %}<span> · {{ row.city }}</span>{% endif %}</p>
           <p class="vacancy-salary">{{ row.salary_text or 'Зарплата не указана' }}</p>
+          {% if row.published_at %}<p class="muted small">Опубликована: <time datetime="{{ row.published_at }}">{{ row.published_at | short_dt }}</time></p>{% endif %}
+          {% if row.archived %}<p><span class="badge">В архиве</span></p>{% endif %}
+          <details class="vacancy-details">
+            <summary>Подробности вакансии</summary>
+            {% if row.details_fetched_at %}
+              <p class="muted small">Проверены: {{ row.details_fetched_at | short_dt }}</p>
+              <p>В архиве: <strong>{{ 'Да' if row.archived is sameas true else 'Нет' if row.archived is sameas false else 'Не удалось определить' }}</strong></p>
+              <p>Обязательное сопроводительное письмо: <strong>{{ 'Да' if row.response_letter_required is sameas true else 'Нет' if row.response_letter_required is sameas false else 'Не удалось определить' }}</strong></p>
+              <p>Тест или анкета HH: <strong>{{ 'Да' if row.has_test is sameas true else 'Нет' if row.has_test is sameas false else 'Не удалось определить' }}</strong></p>
+              {% if not row.published_at %}<p class="muted">Дата публикации не указана.</p>{% endif %}
+              {% if row.key_skills %}<p><strong>Ключевые навыки</strong></p><div class="tags">{% for skill in row.key_skills %}<span class="tag">{{ skill }}</span>{% endfor %}</div>
+              {% elif row.key_skills is not none %}<p class="muted">Ключевые навыки не указаны.</p>{% endif %}
+              {% if row.full_description %}<p><strong>Полное описание</strong></p><div class="raw-text vacancy-description-text">{{ row.full_description }}</div>{% else %}<p class="muted">Описание недоступно.</p>{% endif %}
+            {% else %}
+              <p class="muted">Подробности ещё не загружены. Они появятся, когда вакансия встретится при следующем сборе.</p>
+            {% endif %}
+            {% if row.details_error %}<p class="muted">Последняя попытка загрузки: {{ row.details_error }}{% if row.details_fetched_at %}. Показаны ранее сохранённые данные.{% endif %}</p>{% endif %}
+          </details>
           {% if row.verdict or row.missing_skills %}<details class="vacancy-details"><summary>Почему такая оценка</summary>{% if row.verdict %}<p>{{ row.verdict }}</p>{% endif %}{% if row.missing_skills %}<p>Не хватает: {{ row.missing_skills | join(', ') }}</p>{% endif %}</details>{% endif %}
           {% if row.cover_letter %}<details class="vacancy-details"><summary>Сопроводительное письмо</summary><p class="raw-text">{{ row.cover_letter }}</p></details>{% endif %}
         </div>

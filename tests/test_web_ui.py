@@ -223,8 +223,8 @@ def test_settings_feed_typed_configs(client):
     settings = client.app.state.settings
     assert settings.browser_config().close_stale_tabs is True
     assert settings.llm_config().standard == "anthropic"
-    client.post("/actions/search-settings", data={"scroller.max_pages": "7"})
-    assert settings.scroller_config().max_pages == 7
+    client.post("/actions/search-settings", data={"scroller.max_scroll_steps_per_page": "7"})
+    assert settings.scroller_config().max_scroll_steps_per_page == 7
 
 
 def test_secret_is_not_cleared_by_empty_field(client):
@@ -558,18 +558,18 @@ def test_scroll_settings_are_behind_a_spoiler(client):
     # Everyday fields sit inside the section, scroll knobs in its nested spoiler.
     before_advanced = page.split('<details class="advanced">', 1)[0]
     assert 'name="scroller.load_mode"' in before_advanced
-    assert 'name="scroller.max_pages"' not in before_advanced
-    assert 'name="scroller.max_pages"' in page
+    assert 'name="scroller.max_scroll_steps_per_page"' not in before_advanced
+    assert 'name="scroller.max_scroll_steps_per_page"' in page
 
 
 def test_advanced_fields_still_save(client):
     client.post(
         "/actions/search-settings",
-        data={"scroller.max_pages": "7", "scroller.stable_cycles": "5"},
+        data={"scroller.max_scroll_steps_per_page": "7", "scroller.stable_cycles": "5"},
         follow_redirects=False,
     )
     settings = client.app.state.settings
-    assert settings.get("scroller.max_pages") == 7
+    assert settings.get("scroller.max_scroll_steps_per_page") == 7
     assert settings.scroller_config().stable_cycles == 5
 
 
@@ -680,10 +680,10 @@ def test_panel_query_edit_preserves_resume_context(client):
     assert 'hx-post="/actions/search-settings"' in modal
     assert f'name="resume_id" value="{resume_id}"' in modal
 
-    response = client.post("/actions/search-settings", data={"resume_id": str(resume_id), "search_query": "  Backend Python  ", "scroller.max_pages": "7"})
+    response = client.post("/actions/search-settings", data={"resume_id": str(resume_id), "search_query": "  Backend Python  ", "scroller.max_scroll_steps_per_page": "7"})
     assert response.status_code == 200
     assert response.headers["HX-Trigger-After-Settle"] == "searchSettingsSaved"
-    assert client.app.state.settings.scroller_config().max_pages == 7
+    assert client.app.state.settings.scroller_config().max_scroll_steps_per_page == 7
     assert "Ищем: «Backend Python»" in response.text
     assert "disabled" not in _stage_button(response.text, "collect")
     with start_blocking_portal() as portal:

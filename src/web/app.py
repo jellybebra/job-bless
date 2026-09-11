@@ -20,6 +20,7 @@ from src.browser.docker_runtime import prepare_browser, local_panel_url
 from src.aistudio.runtime import AIStudioRuntime
 from src.aistudio.remote import RemoteAIStudioRuntime
 from src.web.auth import OwnerAuth, router as auth_router
+from src.web.workspace_auth import WorkspaceAuth
 from src.web.accounts import RemoteScreens, router as accounts_router
 from src.config import Config
 from src.db.connection import init_postgres, init_sqlite
@@ -46,7 +47,7 @@ LLM_POLL_SECONDS = 10
 
 def create_app(config: Optional[Config] = None) -> FastAPI:
     config = config or Config.load()
-    auth = OwnerAuth(config.web)
+    auth = WorkspaceAuth(config.web) if config.web.workspace_token else OwnerAuth(config.web)
     if (config.accounts.hh_vnc_host or config.accounts.google_vnc_host) and not auth.enabled:
         raise ValueError("Remote account screens require WEB_PASSWORD_HASH")
 
@@ -150,6 +151,10 @@ def create_app(config: Optional[Config] = None) -> FastAPI:
     # Cache buster: without it browsers keep serving yesterday's stylesheet.
     templates.env.globals["static_version"] = _static_version()
     templates.env.globals["poll_seconds"] = LLM_POLL_SECONDS
+    templates.env.globals["clerk_publishable_key"] = config.web.clerk_publishable_key if config.web.workspace_token else ""
+    if config.web.workspace_token and config.web.clerk_publishable_key:
+        from src.web.clerk_auth import frontend_host
+        templates.env.globals["clerk_host"] = frontend_host(config.web.clerk_publishable_key)
     app.state.templates = templates
 
     app.middleware("http")(auth.guard)
@@ -164,6 +169,34 @@ def create_app(config: Optional[Config] = None) -> FastAPI:
     @app.get("/healthz")
     async def healthz():
         return {"service": "job-bless", "status": "ok", "instance": getattr(config.app, "instance_id", "")}
+
+    if config.web.workspace_token:
+        @app.get("/internal/idle-status")
+        async def idle_status():
+            state = app.state
+            scheduled = any(state.settings.get(key, False) for key in (
+                "schedule.enabled", "schedule.activity_enabled", "schedule.resume_touch_enabled"))
+            return {"busy": any(lane.is_busy for lane in state.tasks.lanes.values())
+                    or state.aistudio.busy or any(state.screens.active(p) for p in ("hh", "google")),
+                    "scheduled": scheduled}
+
+        @app.post("/internal/revoke-session")
+        async def revoke_workspace_session(request: Request):
+            from src.db.models import TaskKind
+            sid = (await request.json()).get("session_id", "")
+            state = app.state
+            hh_lease = state.screens.leases.get("hh")
+            google_lease = state.screens.leases.get("google")
+            hh_owned = hh_lease is not None and hh_lease.owner == sid
+            google_owned = google_lease is not None and google_lease.owner == sid
+            state.auth.sessions.pop(sid, None)
+            await state.screens.revoke_owner(sid)
+            current = state.tasks.current
+            if hh_owned and current and state.tasks.is_busy and current.kind == TaskKind.LOGIN:
+                state.tasks.request_stop()
+            if google_owned and state.aistudio.state == "login":
+                await state.aistudio.stop()
+            return {"revoked": True}
 
     @app.exception_handler(404)
     async def not_found(request: Request, exc):  # noqa: ANN001

@@ -1,0 +1,21 @@
+# Use with docker-compose.yml and a running Traefik on traefik-public.
+services:
+  app:
+    ports: !reset []
+    environment:
+      WEB_PUBLIC_URL: https://${SITE_DOMAIN:?Set SITE_DOMAIN in .env}
+      WEB_SECURE_COOKIES: "true"
+    networks:
+      - default
+      - traefik-public
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: traefik-public
+      traefik.http.routers.job-bless.rule: Host(`${SITE_DOMAIN:?Set SITE_DOMAIN in .env}`)
+      traefik.http.routers.job-bless.entrypoints: websecure
+      traefik.http.routers.job-bless.tls.certresolver: letsencrypt
+      traefik.http.services.job-bless.loadbalancer.server.port: "8080"
+
+networks:
+  traefik-public:
+    external: true

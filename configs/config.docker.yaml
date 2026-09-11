@@ -20,4 +20,3 @@ log:
 
 hh_autoscroller:
   search_url: https://hh.ru/search/vacancy?text=Python
-  max_pages: 10

@@ -11,6 +11,7 @@ from src.db.models import (
     SearchRunStatus,
     PageCommitParams,
     VacancyCard,
+    VacancyDetails,
     VacancyApplication,
     ApplicationStatus,
     Resume,
@@ -489,9 +490,23 @@ class DatabaseRepository:
         row = await self._fetch_one("SELECT * FROM resumes WHERE is_active = 1 ORDER BY updated_at DESC;")
         return _row_to_resume(row) if row else None
 
-    async def set_active_resume(self, resume_id: int) -> None:
-        await self._execute("UPDATE resumes SET is_active = 0 WHERE is_active = 1;")
-        await self._execute("UPDATE resumes SET is_active = 1 WHERE id = ?;", (resume_id,))
+    async def set_active_resume(self, resume_id: Optional[int]) -> None:
+        if resume_id is not None and not await self.get_resume(resume_id):
+            raise ValueError("Резюме не найдено")
+        # Remember an explicit opt-out even when there are no resumes yet.
+        await self.save_settings({"resume.selection": "none" if resume_id is None else str(resume_id)})
+        await self._execute(
+            "UPDATE resumes SET is_active = CASE WHEN id = ? THEN 1 ELSE 0 END;", (resume_id,)
+        )
+
+    async def auto_select_resume(self, resume_id: int) -> None:
+        # Importing must never override the owner's standalone search choice.
+        await self._execute(
+            """UPDATE resumes SET is_active = 1 WHERE id = ?
+               AND NOT EXISTS (SELECT 1 FROM resumes WHERE is_active = 1)
+               AND NOT EXISTS (SELECT 1 FROM app_settings WHERE key = 'resume.selection' AND value = 'none');""",
+            (resume_id,),
+        )
 
     async def delete_resume(self, resume_id: int) -> None:
         await self._execute("DELETE FROM resumes WHERE id = ?;", (resume_id,))
@@ -549,14 +564,20 @@ class DatabaseRepository:
         """Vacancies that have no successful score against this resume yet."""
         query = """
             SELECT v.id, v.external_id, v.canonical_url, v.title, v.company_name, v.salary_text,
-                   v.city, v.work_format, v.experience, v.schedule, v.employment_type, v.raw_json
+                   v.city, v.work_format, v.experience, v.schedule, v.employment_type, v.raw_json,
+                   d.full_description, d.key_skills_json
             FROM vacancies v
+            LEFT JOIN vacancy_details d ON d.vacancy_id = v.id
             LEFT JOIN vacancy_scores s ON s.vacancy_id = v.id AND s.resume_id = ?
             WHERE s.id IS NULL OR s.error_message != ''
             ORDER BY v.last_discovered_at DESC
             LIMIT ?;
         """
-        return await self._fetch_all(query, (resume_id, limit))
+        rows = await self._fetch_all(query, (resume_id, limit))
+        for row in rows:
+            raw_skills = row.pop("key_skills_json", None)
+            row["key_skills"] = _load_json_list(raw_skills) if raw_skills is not None else None
+        return rows
 
     def _vacancy_filters(
         self,
@@ -629,9 +650,13 @@ class DatabaseRepository:
             SELECT v.id, v.external_id, v.canonical_url, v.title, v.company_name, v.salary_text,
                    v.city, v.work_format, v.experience, v.last_discovered_at,
                    s.score, s.verdict, s.matched_skills_json, s.missing_skills_json, s.scored_at,
-                   a.status AS application_status, a.applied_at, a.cover_letter
-                   {', v.raw_json, v.schedule, v.employment_type' if include_details else ''}
+                   a.status AS application_status, a.applied_at, a.cover_letter,
+                   d.full_description, d.key_skills_json, d.published_at,
+                   d.archived, d.response_letter_required, d.has_test,
+                   d.fetched_at AS details_fetched_at, d.last_error AS details_error
+            {', v.raw_json, v.schedule, v.employment_type' if include_details else ''}
             FROM vacancies v
+            LEFT JOIN vacancy_details d ON d.vacancy_id = v.id
             LEFT JOIN vacancy_scores s ON s.vacancy_id = v.id AND s.resume_id = ?
             LEFT JOIN vacancy_applications a ON a.external_id = v.external_id
             {where}
@@ -642,7 +667,45 @@ class DatabaseRepository:
         for row in rows:
             row["matched_skills"] = _load_json_list(row.pop("matched_skills_json", None))
             row["missing_skills"] = _load_json_list(row.pop("missing_skills_json", None))
+            raw_skills = row.pop("key_skills_json", None)
+            row["key_skills"] = _load_json_list(raw_skills) if raw_skills is not None else None
+            for key in ("archived", "response_letter_required", "has_test"):
+                if row[key] is not None:
+                    row[key] = bool(row[key])
         return rows
+
+    async def save_vacancy_details(self, source: str, external_id: str, details: VacancyDetails) -> None:
+        vacancy_id = await self._fetch_val(
+            "SELECT id FROM vacancies WHERE source = ? AND external_id = ?", (source, external_id)
+        )
+        if vacancy_id is None:
+            raise ValueError("Сначала сохраните карточку вакансии")
+        # A failed/partial refresh preserves previously known values. Explicit
+        # false flags and an empty skills list, however, are real updates.
+        await self._execute("""
+            INSERT INTO vacancy_details (
+                vacancy_id, full_description, key_skills_json, published_at, archived,
+                response_letter_required, has_test, fetched_at, last_attempted_at, last_error
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (vacancy_id) DO UPDATE SET
+                full_description = COALESCE(NULLIF(excluded.full_description, ''), vacancy_details.full_description),
+                key_skills_json = COALESCE(excluded.key_skills_json, vacancy_details.key_skills_json),
+                published_at = COALESCE(NULLIF(excluded.published_at, ''), vacancy_details.published_at),
+                archived = COALESCE(excluded.archived, vacancy_details.archived),
+                response_letter_required = COALESCE(excluded.response_letter_required, vacancy_details.response_letter_required),
+                has_test = COALESCE(excluded.has_test, vacancy_details.has_test),
+                fetched_at = COALESCE(NULLIF(excluded.fetched_at, ''), vacancy_details.fetched_at),
+                last_attempted_at = excluded.last_attempted_at,
+                last_error = excluded.last_error;
+        """, (
+            vacancy_id, details.full_description,
+            json.dumps(details.key_skills, ensure_ascii=False) if details.key_skills is not None else None,
+            details.published_at,
+            int(details.archived) if details.archived is not None else None,
+            int(details.response_letter_required) if details.response_letter_required is not None else None,
+            int(details.has_test) if details.has_test is not None else None,
+            details.fetched_at, _now(), details.error,
+        ))
 
     async def count_vacancies(
         self,
