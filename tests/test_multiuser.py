@@ -281,3 +281,25 @@ async def test_private_revocation_only_closes_that_sessions_screens(workspaces):
         await app.state.settings.save({"schedule.enabled": "1"}, keys={"schedule.enabled"})
         status = await client.get("/internal/idle-status", headers={"x-workspace-token": "A"*48})
         assert status.json()["scheduled"] is True
+
+
+@pytest.mark.parametrize("status", ["running", "exited"])
+def test_recreated_gateway_rejoins_existing_worker_network(tmp_path, status):
+    engine = MagicMock()
+    image = "image-app:sha-test"
+    engine.images.get.return_value.id = "sha256:current"
+    worker = SimpleNamespace(attrs={"Config": {"Image": image}, "Image": "sha256:current"},
+                             status=status, reload=MagicMock(), start=MagicMock())
+    gateway = SimpleNamespace(id="new-gateway-id")
+    engine.containers.get.side_effect = lambda name: gateway if name == "gateway" else worker
+    network = engine.networks.get.return_value
+    network.attrs = {"Containers": {"old-gateway-id": {}, "worker-id": {}}}
+    pool = WorkspacePool(root=tmp_path, host_root="/private", image_prefix="image", image_tag="sha-test",
+                         gateway_container="gateway", public_url=ORIGIN, publishable_key=PUBLISHABLE,
+                         docker_client=engine)
+    item = pool._register(Identity("user_A", "sess_A", "", ()))
+    pool._start(item, "app")
+    network.connect.assert_called_once_with(gateway, aliases=["workspace-gateway"])
+    engine.containers.create.assert_not_called()
+    assert worker.start.call_count == (0 if status == "running" else 1)
+    pool.close()

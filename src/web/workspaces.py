@@ -51,6 +51,7 @@ class WorkspacePool:
         self.idle_seconds = idle_seconds
         self.docker = docker_client or docker.from_env(timeout=120)
         self.image_ids = {}
+        self.attached_networks = set()
         self.db = sqlite3.connect(self.root / "workspaces.db")
         self.db.execute("CREATE TABLE IF NOT EXISTS workspaces (user_id TEXT PRIMARY KEY, key TEXT UNIQUE NOT NULL, token TEXT NOT NULL, google_key TEXT NOT NULL)")
         self.db.execute("CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
@@ -105,6 +106,8 @@ class WorkspacePool:
 
     def _network(self, item):
         name = f"jb-{item.key}"
+        if name in self.attached_networks:
+            return name
         try:
             network = self.docker.networks.get(name)
         except docker.errors.NotFound:
@@ -114,10 +117,14 @@ class WorkspacePool:
         gateway = self.docker.containers.get(self.gateway_container)
         if gateway.id not in network.attrs.get("Containers", {}):
             network.connect(gateway, aliases=["workspace-gateway"])
+        self.attached_networks.add(name)
         return name
 
     def _start(self, item, service):
         name = f"jb-{item.key}-{service}"
+        # A recreated gateway has a new Docker identity even when the user's
+        # worker stays on the same image. Restore its network attachment first.
+        network = self._network(item)
         image_kind = {"app": "app", "hh": "hh", "google": "aistudio"}[service]
         image = f"{self.image_prefix}-{image_kind}:{self.image_tag}"
         if image not in self.image_ids:
@@ -128,7 +135,6 @@ class WorkspacePool:
             container.remove()
             container = None
         if not container:
-            network = self._network(item)
             mount = {"app": "/app/data", "hh": "/data/profile", "google": "/app/data"}[service]
             environment = {}
             options = {}
