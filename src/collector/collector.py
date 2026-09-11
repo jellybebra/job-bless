@@ -145,6 +145,7 @@ class HHVacancyCardCollector:
 
                 page_number = 1
                 while not self._stop_requested:
+                    await self.page_guard.check_page_state(page, is_navigation_step=True)
                     current_page_url = page.url
                     if current_page_url in visited_urls:
                         logger.warning(f"Loop detected on URL: '{current_page_url}'. Halting collection.")
@@ -215,14 +216,12 @@ class HHVacancyCardCollector:
                         summary.completion_reason = "stopped_by_user"
                         break
 
-                    if page_number >= sc_cfg.max_pages:
-                        logger.info(f"Reached max pages limit ({sc_cfg.max_pages}). Stopping.")
-                        summary.completion_reason = "max_pages_reached"
-                        break
-
                     # 4. Navigate to Next Page
                     if limiter:
                         await limiter.acquire(should_stop=lambda: self._stop_requested)
+                    if self._stop_requested:
+                        summary.completion_reason = "stopped_by_user"
+                        break
                     has_next = await self._go_to_next_page(page)
                     if not has_next:
                         logger.info("No next page button found. Finished search results.")

@@ -313,7 +313,9 @@
     const counter = document.getElementById("task-counter");
     const message = document.getElementById("task-message");
     if (bar) bar.style.width = task.percent + "%";
-    if (counter) counter.textContent = task.done + " / " + task.total;
+    if (counter) counter.textContent = task.total
+      ? task.done + " / " + task.total
+      : "Обработано страниц: " + task.done + " · без лимита";
     if (message && task.message) message.textContent = task.message;
   }
 

@@ -57,7 +57,6 @@ class ScrollerConfig:
     page_timeout_sec: float = 30.0
     max_scroll_steps_per_page: int = 200
     max_scroll_time_sec_per_page: float = 120.0
-    max_pages: int = 10
     stable_cycles: int = 3
 
 
@@ -189,7 +188,6 @@ class Config:
             scroll_pause_max_sec=float(s_data.get("scroll_pause_max_sec", 0.25)),
             max_scroll_steps_per_page=s_data.get("max_scroll_steps_per_page", 200),
             max_scroll_time_sec_per_page=float(s_data.get("max_scroll_time_sec_per_page", 120.0)),
-            max_pages=s_data.get("max_pages", 10),
             stable_cycles=s_data.get("stable_cycles", 3),
         )
 

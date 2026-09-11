@@ -92,7 +92,8 @@ async def collect_job(ctx: TaskContext) -> Dict[str, Any]:
     browser_config = await ensure_browser(ctx)
     run_id = f"web_{ctx.state.id}"
     ctx.log(f"сбор вакансий: {search_url}")
-    ctx.progress(0, scroller_config.max_pages)
+    ctx.log("собираю до конца выдачи или нажатия «Стоп», без лимита страниц")
+    ctx.progress(0)
 
     await ctx.repository.create_search_run(
         SearchRun(
@@ -131,12 +132,17 @@ async def collect_job(ctx: TaskContext) -> Dict[str, Any]:
                 await ctx.repository.commit_page_transaction(item)
                 pages += 1
                 ctx.log(f"страница #{item.page_number}: сохранено карточек {len(item.cards)}")
-                ctx.progress(pages, scroller_config.max_pages)
+                ctx.progress(pages)
             elif isinstance(item, CollectionSummary):
                 summary = item
 
             if ctx.should_stop():
                 collector.stop()
+    except asyncio.CancelledError:
+        await ctx.repository.update_search_run_status(
+            run_id, status=SearchRunStatus.CANCELLED, reason="stopped_by_user"
+        )
+        raise
     except Exception as e:
         await ctx.repository.update_search_run_status(
             run_id, status=SearchRunStatus.FAILED, error_code="ERR_COLLECT", error_message=str(e)

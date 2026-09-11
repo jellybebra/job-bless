@@ -103,7 +103,7 @@
   <section class="main-actions" aria-labelledby="main-actions-title">
     <h2 id="main-actions-title">Основные действия</h2>
     <div class="action-grid">
-      {{ action_card('collect', 'Собрать вакансии', 'Найдёт вакансии по вашему запросу и сохранит их в разделе «Вакансии».', needs_resume=false, config='search') }}
+      {{ action_card('collect', 'Собрать вакансии', 'Сохранит вакансии со всех страниц выдачи, с паузами между переходами. Сбор идёт до конца выдачи или нажатия «Стоп».', needs_resume=false, config='search') }}
       {{ action_card('score', 'Оценить соответствие вакансий резюме', 'Нейросеть сравнит найденные вакансии с резюме и поставит оценку от 0 до 100.', needs_llm=true, config='score', start_label='Оценить вакансии') }}
       {{ action_card('apply', 'Отправить отклики', 'Отправит отклики от вашего имени на вакансии с оценкой выше заданного порога.', config='apply') }}
       {{ action_card('pipeline', 'Выполнить несколько действий подряд', 'Выполнит выбранные действия по очереди.', needs_resume=panel_pipeline_needs_resume, config='pipeline', start_label='Запустить') }}
@@ -141,6 +141,8 @@
       {% if t.total %}
         <div class="progress"><div class="bar" id="task-bar" style="width: {{ t.percent }}%"></div></div>
         <div class="muted" id="task-counter">{{ t.done }} / {{ t.total }}</div>
+      {% elif t.kind == 'collect' %}
+        <div class="muted" id="task-counter">Обработано страниц: {{ t.done }} · без лимита</div>
       {% endif %}
       {% if t.awaiting_confirmation %}
         <div class="confirm-box">

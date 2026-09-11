@@ -88,8 +88,6 @@ FIELDS: Tuple[SettingField, ...] = (
                  help="instant — дождаться списка и сразу его разобрать: hh.ru отдаёт все "
                       "50 вакансий сразу, прокрутка ничего не добавляет. "
                       "scroll — старое поведение, если страница вдруг начнёт догружаться."),
-    SettingField("scroller.max_pages", "Максимум страниц за прогон", "int", GROUP_SEARCH,
-                 lambda c: c.scroller.max_pages, minimum=1, maximum=9999, advanced=True),
     SettingField("scroller.max_scroll_steps_per_page", "Максимум шагов скролла на страницу", "int", GROUP_SEARCH,
                  lambda c: c.scroller.max_scroll_steps_per_page, minimum=1, maximum=1000, advanced=True,
                  help="Только для режима scroll."),
@@ -417,7 +415,6 @@ class SettingsService:
             base,
             search_url=self.search_url_for(query) if query is not None else self.search_url,
             load_mode=self.get("scroller.load_mode", base.load_mode),
-            max_pages=int(self.get("scroller.max_pages", base.max_pages)),
             max_scroll_steps_per_page=int(
                 self.get("scroller.max_scroll_steps_per_page", base.max_scroll_steps_per_page)
             ),
