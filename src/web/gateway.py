@@ -94,7 +94,7 @@ def create_gateway(*, auth=None, pool=None, public_url=None, publishable_key=Non
     base = Path(__file__).parent
     app.mount("/static", StaticFiles(directory=base / "static"), name="static")
     templates = Jinja2Templates(directory=base / "templates")
-    templates.env.globals.update(clerk_publishable_key=publishable_key, clerk_host=auth.host, static_version="clerk-1")
+    templates.env.globals.update(clerk_publishable_key=publishable_key, clerk_host=auth.host, static_version="clerk-2")
 
     @app.get("/healthz")
     async def health():
