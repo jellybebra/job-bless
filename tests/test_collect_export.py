@@ -68,6 +68,34 @@ def test_invalid_settings_keep_query_and_stale_form_cannot_change_resume(client)
     assert settings.search_query == original
 
 
+def test_select_standalone_keeps_resume_and_independent_queries(client):
+    repo, settings = client.app.state.repository, client.app.state.settings
+    rid = client.portal.call(repo.upsert_resume, Resume(
+        source_url='https://hh.ru/resume/saved', search_query='Java', context_text='Saved experience',
+    ))
+    client.portal.call(repo.set_active_resume, rid)
+    client.portal.call(settings.save_search_query, 'Аналитик')
+    response = client.post('/actions/resume/select', data={'resume_id': 0})
+    assert 'value="0" selected>Без резюме' in response.text
+    assert 'Ищем: «Аналитик»' in response.text
+    assert client.portal.call(repo.get_active_resume) is None
+    assert 'Выбран поиск без резюме' in client.get('/resume').text
+    # A search form opened before the switch cannot overwrite the other query.
+    stale = client.post('/actions/search-settings', data={'resume_id': rid, 'search_query': 'Stale'})
+    assert 'Активное резюме изменилось' in stale.text
+    client.post('/actions/search-settings', data={'search_query': 'SQL'})
+    client.portal.call(settings.load)
+    assert settings.search_query == 'SQL'
+    saved = client.portal.call(repo.get_resume, rid)
+    assert (saved.search_query, saved.context_text) == ('Java', 'Saved experience')
+    # Both selection controls can restore the saved resume.
+    response = client.post(f'/actions/resume/{rid}/activate')
+    assert response.status_code == 200
+    assert client.portal.call(repo.get_active_resume).id == rid
+    response = client.post('/actions/resume/select', data={'resume_id': 0})
+    assert 'Ищем: «SQL»' in response.text
+
+
 @pytest.mark.parametrize("with_resume", [False, True])
 def test_collection_saves_cards_with_optional_resume(client, monkeypatch, with_resume):
     repo = client.app.state.repository

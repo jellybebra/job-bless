@@ -195,6 +195,7 @@ async def resume_page(request: Request, error: str = Query("")) -> HTMLResponse:
         request,
         "resume.html",
         resumes=resumes,
+        active_resume=await repository.get_active_resume(),
         account=account,
         error=error,
         # Use the same provider's catalog as the main model picker.

@@ -68,6 +68,39 @@ async def test_partial_failure_continues_and_selects_first_success(service):
     assert (await service.repository.get_active_resume()).external_id == 'good'
 
 
+@pytest.mark.parametrize('with_saved_resume', [False, True])
+async def test_explicit_standalone_search_survives_reopen_and_import(service, with_saved_resume):
+    repo = service.repository
+    if with_saved_resume:
+        saved = await repo.upsert_resume(Resume(source_url='https://hh.ru/resume/old', external_id='old',
+                                              search_query='Python', context_text='My projects'))
+        await repo.set_active_resume(saved)
+    await repo.set_active_resume(None)
+    # A new connection models application restart: selection is not in memory.
+    async with repo.connection.execute('PRAGMA database_list') as cursor:
+        database_path = (await cursor.fetchone())[2]
+    connection = await init_sqlite(database_path)
+    try:
+        service.repository = DatabaseRepository(connection)
+        await service.settings.load()
+        service.parser.discover = AsyncMock(return_value=['https://hh.ru/resume/new'])
+        service.parser.parse = AsyncMock(return_value=Resume(source_url='https://hh.ru/resume/new', external_id='new'))
+        for _ in range(2):
+            assert (await service.import_account())['imported'] == 1
+            assert await service.repository.get_active_resume() is None
+        resumes = await service.repository.list_resumes()
+        assert len(resumes) == (2 if with_saved_resume else 1)
+        assert not any(resume.is_active for resume in resumes)
+        if with_saved_resume:
+            preserved = await service.repository.get_resume(saved)
+            assert (preserved.search_query, preserved.context_text) == ('Python', 'My projects')
+        await service.repository.set_active_resume(resumes[0].id)
+        await service.import_account()
+        assert (await service.repository.get_active_resume()).id == resumes[0].id
+    finally:
+        await connection.close()
+
+
 async def test_refresh_inactive_card_keeps_selection_and_concurrent_edits(service):
     repo = service.repository
     active = await repo.upsert_resume(Resume(source_url='https://hh.ru/resume/one', external_id='one'))

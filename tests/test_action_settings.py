@@ -179,6 +179,8 @@ def test_setup_section_and_resume_selection(client):
     from unittest.mock import patch
     with patch.object(client.app.state.tasks.lane(), 'task', SimpleNamespace(done=lambda: False)):
         blocked = client.post('/actions/resume/select', data={'resume_id': first})
+        standalone = client.post('/actions/resume/select', data={'resume_id': 0})
+        assert 'Дождитесь завершения текущего действия' in standalone.text
     assert 'Дождитесь завершения текущего действия' in blocked.text
     assert re.search(r'<select[^>]*id="active-resume"[^>]*disabled', blocked.text)
     with start_blocking_portal() as portal:

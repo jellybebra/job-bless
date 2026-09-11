@@ -187,11 +187,12 @@ async def confirm_task(request: Request, lane: str = Form(LANE_MAIN)) -> HTMLRes
 @router.post("/resume/select", response_class=HTMLResponse)
 async def select_resume(request: Request, resume_id: int = Form(...)) -> HTMLResponse:
     repository = request.app.state.repository
-    if request.app.state.tasks.is_busy:
-        return await _panel(request, error="Дождитесь завершения текущего действия, чтобы выбрать резюме.")
-    if not await repository.get_resume(resume_id):
-        return await _panel(request, error="Резюме не найдено. Обновите список резюме.")
-    await repository.set_active_resume(resume_id)
+    async with request.app.state.tasks._start_lock:
+        if request.app.state.tasks.is_busy:
+            return await _panel(request, error="Дождитесь завершения текущего действия, чтобы выбрать резюме.")
+        if resume_id != 0 and not await repository.get_resume(resume_id):
+            return await _panel(request, error="Резюме не найдено. Обновите список резюме.")
+        await repository.set_active_resume(resume_id or None)
     return await _panel(request)
 
 
@@ -323,7 +324,12 @@ async def rebuild_profile(
 
 @router.post("/resume/{resume_id}/activate")
 async def activate_resume(request: Request, resume_id: int) -> RedirectResponse:
-    await request.app.state.repository.set_active_resume(resume_id)
+    async with request.app.state.tasks._start_lock:
+        if request.app.state.tasks.is_busy:
+            return RedirectResponse("/resume?" + urlencode({"error": "Дождитесь завершения текущего действия, чтобы выбрать резюме."}), status_code=303)
+        if not await request.app.state.repository.get_resume(resume_id):
+            raise HTTPException(404, "Резюме не найдено")
+        await request.app.state.repository.set_active_resume(resume_id)
     return RedirectResponse("/resume", status_code=303)
 
 

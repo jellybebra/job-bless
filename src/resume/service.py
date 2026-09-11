@@ -64,8 +64,7 @@ class ResumeService:
                     if checkpoint:
                         await checkpoint()
                     resume_id = await self._save_parsed(resume)
-                    if not await self.repository.get_active_resume():
-                        await self.repository.set_active_resume(resume_id)
+                    await self.repository.auto_select_resume(resume_id)
                     report["resume_ids"].append(resume_id)
                     report["imported"] += 1
                     say(f"сохранено резюме {index}/{len(urls)}: {resume.title}")

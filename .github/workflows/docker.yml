@@ -35,6 +35,7 @@ jobs:
         run: |
           docker compose config --quiet
           docker compose -f docker-compose.yml -f compose.server.yml config --quiet
+          docker compose -f docker-compose.yml -f compose.traefik.yml config --quiet
           docker compose -f docker-compose.yml -f compose.build.yml config --quiet
       - name: Choose image names and tags
         id: images

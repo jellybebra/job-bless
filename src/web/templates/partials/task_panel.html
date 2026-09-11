@@ -82,20 +82,18 @@
     <div class="action-grid setup-grid">
       {{ action_card('login', 'Аккаунт hh.ru' if panel_hh_logged_in else 'Смена аккаунта' if current_task and current_task.kind.value == 'login' and tasks.is_busy and current_task.params.get('switch_account') else 'Войти в hh.ru', '' if panel_hh_logged_in else 'Откроет браузер в этой панели. После входа статус обновится автоматически.' if panel_remote_hh else 'Откроет браузер в этой панели. После входа статус обновится автоматически.', needs_resume=false) }}
       <article class="action-card setup-card{{ ' is-connected' if panel_resume }}">
-        <div class="action-card-heading"><h3>Выбор резюме</h3></div>
-        <p class="action-description">Используется для оценки вакансий и отправки откликов.</p>
-        {% if panel_resumes %}
+        <div class="action-card-heading"><h3>Режим поиска</h3></div>
+        <p class="action-description">Ищите по отдельному запросу или выберите резюме для поиска и оценки вакансий.</p>
           <form class="resume-select-form" hx-post="/actions/resume/select" hx-trigger="change" hx-disabled-elt="find select">
-            <label class="small muted" for="active-resume">Активное резюме</label>
+            <label class="small muted" for="active-resume">Резюме для поиска</label>
             <select name="resume_id" id="active-resume" {{ 'disabled' if tasks.is_busy }}>
-              {% if not panel_resume %}<option value="" disabled selected>Выберите резюме</option>{% endif %}
+              {% if not panel_resume and not panel_standalone_search %}<option value="" disabled selected>Выберите режим</option>{% endif %}
+              <option value="0" {{ 'selected' if not panel_resume and panel_standalone_search }}>Без резюме</option>
               {% for resume in panel_resumes %}<option value="{{ resume.id }}" {{ 'selected' if panel_resume and resume.id == panel_resume.id }}>{{ resume.title or 'Без названия' }}</option>{% endfor %}
             </select>
           </form>
           {% if tasks.is_busy %}<p class="action-hint">Выбор доступен после завершения текущего действия.</p>{% endif %}
-        {% else %}
-          <p class="action-hint">После входа в hh.ru ваши резюме появятся здесь автоматически.</p>
-        {% endif %}
+        {% if not panel_resume %}<p class="action-hint">Поиск по отдельному запросу. Для оценки соответствия и откликов выберите резюме.</p>{% endif %}
         <div class="action-card-footer"><a class="btn" href="/resume">{{ 'Мои резюме' if panel_resumes else 'Перейти к резюме' }}</a></div>
       </article>
       {% include 'partials/llm_card.html' %}

@@ -28,7 +28,7 @@
 
 {% if resumes %}
 <section class="saved-resumes" aria-labelledby="saved-heading">
-  <div class="history-context"><h2 id="saved-heading">Сохранённые резюме</h2><span>Активное резюме используется для поиска и оценки вакансий.</span></div>
+  <div class="history-context"><h2 id="saved-heading">Сохранённые резюме</h2><span>{% if active_resume %}Активное резюме используется для поиска и оценки вакансий.{% else %}Выбран поиск без резюме. Сохранённые резюме не используются.{% endif %} <a href="/actions#search-tools">Изменить режим поиска</a></span></div>
   {% for resume in resumes %}
     <details class="resume-card {{ 'active' if resume.is_active }}" aria-labelledby="resume-title-{{ resume.id }}">
       <summary class="resume-head">
@@ -46,7 +46,7 @@
         <div class="resume-actions">
           <form method="post" action="/actions/resume/{{ resume.id }}/activate">
             {% include 'partials/csrf_input.html' %}
-            <button type="submit">Сделать активным</button>
+            <button type="submit" {{ 'disabled' if tasks.is_busy }}>Сделать активным</button>
           </form>
         </div>
         {% endif %}

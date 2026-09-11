@@ -489,9 +489,23 @@ class DatabaseRepository:
         row = await self._fetch_one("SELECT * FROM resumes WHERE is_active = 1 ORDER BY updated_at DESC;")
         return _row_to_resume(row) if row else None
 
-    async def set_active_resume(self, resume_id: int) -> None:
-        await self._execute("UPDATE resumes SET is_active = 0 WHERE is_active = 1;")
-        await self._execute("UPDATE resumes SET is_active = 1 WHERE id = ?;", (resume_id,))
+    async def set_active_resume(self, resume_id: Optional[int]) -> None:
+        if resume_id is not None and not await self.get_resume(resume_id):
+            raise ValueError("Резюме не найдено")
+        # Remember an explicit opt-out even when there are no resumes yet.
+        await self.save_settings({"resume.selection": "none" if resume_id is None else str(resume_id)})
+        await self._execute(
+            "UPDATE resumes SET is_active = CASE WHEN id = ? THEN 1 ELSE 0 END;", (resume_id,)
+        )
+
+    async def auto_select_resume(self, resume_id: int) -> None:
+        # Importing must never override the owner's standalone search choice.
+        await self._execute(
+            """UPDATE resumes SET is_active = 1 WHERE id = ?
+               AND NOT EXISTS (SELECT 1 FROM resumes WHERE is_active = 1)
+               AND NOT EXISTS (SELECT 1 FROM app_settings WHERE key = 'resume.selection' AND value = 'none');""",
+            (resume_id,),
+        )
 
     async def delete_resume(self, resume_id: int) -> None:
         await self._execute("DELETE FROM resumes WHERE id = ?;", (resume_id,))
