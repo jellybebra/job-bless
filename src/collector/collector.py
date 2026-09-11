@@ -1,12 +1,15 @@
 import asyncio
 import logging
 import time
-from datetime import datetime, timezone
-from typing import AsyncGenerator, Set, Tuple, Optional, Union, Dict, Any
-from playwright.async_api import Page
+from asyncio import CancelledError
+from contextlib import AsyncExitStack
+from typing import AsyncGenerator, Optional, Union, Callable
+from playwright.async_api import Page, TimeoutError as PlaywrightTimeoutError
 
 from src.config import BrowserConfig, ScrollerConfig
 from src.browser.connector import BrowserConnector
+from src.browser.errors import is_transient_browser_error
+from src.browser.intervention import HHInterventionRequired
 from src.collector.card_parser import HHSelectors, VacancyCardParser
 from src.collector.scroll_engine import ScrollEngine
 from src.collector.page_guard import HHPageGuard
@@ -14,6 +17,10 @@ from src.collector.popup_handler import PopupHandler
 from src.db.models import VacancyCard, CollectionSummary, PageCommitParams
 
 logger = logging.getLogger(__name__)
+
+
+class SearchPageNotReady(RuntimeError):
+    """HH has not provided a usable result page yet; keep the current checkpoint."""
 
 
 class HHVacancyCardCollector:
@@ -27,6 +34,7 @@ class HHVacancyCardCollector:
         'a[data-qa="pager-next"]',
         'a.bloko-button[data-qa="pager-next"]',
     ]
+    EMPTY_RESULTS_SELECTOR = '[data-qa="empty-vacancy-search-block"]'
 
     def __init__(
         self,
@@ -64,11 +72,18 @@ class HHVacancyCardCollector:
         """
         try:
             await page.wait_for_selector(
-                HHSelectors.VACANCY_CARD, timeout=max(1.0, timeout_sec) * 1000, state="attached"
+                f'{HHSelectors.VACANCY_CARD}, {self.EMPTY_RESULTS_SELECTOR}',
+                timeout=max(1.0, timeout_sec) * 1000, state="attached",
             )
-        except Exception as e:  # noqa: BLE001 - an empty result page is valid
-            logger.warning(f"No vacancy cards appeared within {timeout_sec:.0f}s: {e}")
-            return 0
+        except PlaywrightTimeoutError as error:
+            await self.page_guard.check_page_state(page, is_navigation_step=True)
+            raise SearchPageNotReady('HH не загрузил карточки вакансий; повторяю эту страницу') from error
+
+        if not await page.query_selector_all(HHSelectors.VACANCY_CARD):
+            empty = await page.query_selector(self.EMPTY_RESULTS_SELECTOR)
+            if empty and await empty.is_visible():
+                return 0
+            raise SearchPageNotReady('HH пока не показал ни вакансии, ни сообщение о пустой выдаче')
 
         deadline = time.monotonic() + max(1.0, timeout_sec)
         last_count, stable = -1, 0
@@ -85,7 +100,40 @@ class HHVacancyCardCollector:
             await asyncio.sleep(poll_sec)
 
         logger.info(f"Result list ready: {last_count} cards on the page.")
-        return max(0, last_count)
+        if last_count <= 0:
+            raise SearchPageNotReady('Карточки исчезли до окончания загрузки страницы HH')
+        return last_count
+
+    async def _read_page(self, page, page_number, current_url, sc_cfg):
+        """Keep an attempt local: a crash halfway through must not mark cards as saved."""
+        candidates = {}
+
+        async def parse_step():
+            for card, _ in await self.card_parser.parse_cards_from_page(
+                page, page_number=page_number, search_url=current_url,
+            ):
+                candidates[(card.source, card.external_id)] = card
+
+        found = await self._wait_for_cards(page, sc_cfg.page_timeout_sec)
+        if not found:
+            return [], False
+        if sc_cfg.load_mode == 'instant':
+            await parse_step()
+            if not candidates:
+                await self.scroll_engine.scroll_page(page, on_step_callback=parse_step)
+        else:
+            await self.scroll_engine.scroll_page(page, on_step_callback=parse_step)
+            await parse_step()
+        if not candidates and not self._stop_requested:
+            raise SearchPageNotReady('Карточки HH найдены, но прочитать их не удалось')
+        return list(candidates.values()), True
+
+    async def _retry_pause(self, attempt):
+        remaining = min(30, 2 ** min(attempt, 5))
+        while remaining > 0 and not self._stop_requested:
+            interval = min(.25, remaining)
+            await asyncio.sleep(interval)
+            remaining -= interval
 
     def build_scroll_engine(self, sc_cfg: ScrollerConfig) -> ScrollEngine:
         """Scroll engine for collecting: fast, driven by the settings.
@@ -112,6 +160,7 @@ class HHVacancyCardCollector:
         task_id: str,
         scroller_config: Optional[ScrollerConfig] = None,
         limiter=None,
+        on_retry: Optional[Callable[[str], None]] = None,
     ) -> AsyncGenerator[Union[VacancyCard, PageCommitParams, CollectionSummary], None]:
         if not task_id:
             raise ValueError("task_id must not be empty.")
@@ -126,110 +175,105 @@ class HHVacancyCardCollector:
             last_processed_url=search_url,
         )
 
-        seen_vacancies: Set[Tuple[str, str]] = set()  # (source, external_id)
-        visited_urls: Set[str] = set()
-
+        seen_vacancies = set()
+        visited_urls = set()
+        resume_url = search_url
+        page_number = 1
+        page_committed = False
+        page = None
+        failures = 0
         connector = BrowserConnector(browser_config, limiter=limiter)
         try:
-            async with connector.connect() as page:
-                self.popup_handler.setup_dialog_handler(page)
-
-                logger.info(f"Opening search URL for task '{task_id}': {search_url}")
-                if limiter:
-                    await limiter.acquire(should_stop=lambda: self._stop_requested)
-                await page.goto(search_url, wait_until="domcontentloaded", timeout=browser_config.timeout_ms)
-                await asyncio.sleep(1.0)
-
-                await self.page_guard.check_page_state(page, is_navigation_step=True)
-                await self.popup_handler.dismiss_known_overlays(page)
-
-                page_number = 1
+            async with AsyncExitStack() as tabs:
                 while not self._stop_requested:
-                    await self.page_guard.check_page_state(page, is_navigation_step=True)
-                    current_page_url = page.url
-                    if current_page_url in visited_urls:
-                        logger.warning(f"Loop detected on URL: '{current_page_url}'. Halting collection.")
-                        summary.completion_reason = "loop_detected"
-                        break
-                    visited_urls.add(current_page_url)
-                    summary.last_processed_url = current_page_url
+                    try:
+                        if page is None:
+                            page = await tabs.enter_async_context(connector.connect())
+                            self.popup_handler.setup_dialog_handler(page)
+                            logger.info("Opening page #%s for task '%s': %s", page_number, task_id, resume_url)
+                            if limiter:
+                                await limiter.acquire(should_stop=lambda: self._stop_requested)
+                            response = await page.goto(resume_url, wait_until="domcontentloaded", timeout=browser_config.timeout_ms)
+                            await self.page_guard.check_page_state(page, is_navigation_step=True)
+                            if response and response.status in (401, 403, 429):
+                                raise HHInterventionRequired('HH ограничил доступ. Откройте браузер HH и проверьте сообщение сайта.')
+                            if response and response.status >= 500:
+                                raise SearchPageNotReady(f'HH временно недоступен (HTTP {response.status})')
+                            if response and response.status >= 400:
+                                raise RuntimeError(f'Страница поиска недоступна (HTTP {response.status})')
+                            await self.popup_handler.dismiss_known_overlays(page)
+                            # Recovery of a committed page must wait for its pager too.
+                            if page_committed:
+                                if not await self._wait_for_cards(page, sc_cfg.page_timeout_sec):
+                                    raise SearchPageNotReady('HH не восстановил уже обработанную страницу')
 
-                    logger.info(f"Task '{task_id}' -> Processing page #{page_number}: {current_page_url}")
-                    page_key = f"page_{page_number}"
-                    page_cards: list[VacancyCard] = []
-
-                    async def incremental_card_parser_step() -> None:
-                        nonlocal page_cards
-                        step_cards = await self.card_parser.parse_cards_from_page(
-                            page, page_number=page_number, search_url=current_page_url
-                        )
-                        new_cards_in_step = []
-                        for card, err_msg in step_cards:
-                            card_key = (card.source, card.external_id)
-                            if card_key in seen_vacancies:
-                                summary.duplicate_cards += 1
-                                continue
-
-                            seen_vacancies.add(card_key)
-                            card.page_key = page_key
-                            card.page_number = page_number
-                            summary.total_cards_found += 1
-                            summary.unique_vacancies += 1
-                            page_cards.append(card)
-                            new_cards_in_step.append(card)
-
-                    # 3. Read the cards. hh.ru renders the whole page of results
-                    # server-side, so scrolling reveals nothing new — waiting for
-                    # the list and parsing it once is both faster and quieter.
-                    if sc_cfg.load_mode == "instant":
-                        found = await self._wait_for_cards(page, sc_cfg.page_timeout_sec) > 0
-                        await incremental_card_parser_step()
-
-                        if not page_cards and found:
-                            logger.warning(
-                                "Cards are present but none were parsed — falling back to scrolling."
+                        await self.page_guard.check_page_state(page, is_navigation_step=True)
+                        if not page_committed:
+                            resume_url = page.url
+                            if resume_url in visited_urls:
+                                raise RuntimeError('HH вернул уже обработанную страницу вместо следующей')
+                            logger.info("Task '%s' -> Processing page #%s: %s", task_id, page_number, resume_url)
+                            candidates, has_results = await self._read_page(page, page_number, resume_url, sc_cfg)
+                            if self._stop_requested and not candidates:
+                                break
+                            page_key = f'page_{page_number}'
+                            page_cards = []
+                            for card in candidates:
+                                key = (card.source, card.external_id)
+                                if key in seen_vacancies:
+                                    summary.duplicate_cards += 1
+                                    continue
+                                seen_vacancies.add(key)
+                                card.page_key, card.page_number = page_key, page_number
+                                page_cards.append(card)
+                            summary.total_cards_found += len(page_cards)
+                            summary.unique_vacancies += len(page_cards)
+                            summary.total_pages_processed += 1
+                            summary.last_processed_url = resume_url
+                            visited_urls.add(resume_url)
+                            page_committed = True
+                            yield PageCommitParams(
+                                search_run_id=task_id, page_key=page_key, page_number=page_number,
+                                current_url=resume_url, canonical_url=resume_url, cards=page_cards,
                             )
-                            await self.scroll_engine.scroll_page(
-                                page, on_step_callback=incremental_card_parser_step
-                            )
-                    else:
-                        await self.scroll_engine.scroll_page(
-                            page, on_step_callback=incremental_card_parser_step
-                        )
-                        # Final pass to capture any remaining unparsed cards on page
-                        await incremental_card_parser_step()
+                            if not has_results:
+                                summary.completion_reason = 'no_results'
+                                break
 
-                    # Yield page commit params to trigger database transaction for page
-                    page_params = PageCommitParams(
-                        search_run_id=task_id,
-                        page_key=page_key,
-                        page_number=page_number,
-                        current_url=current_page_url,
-                        canonical_url=current_page_url,
-                        cards=page_cards,
-                    )
-                    yield page_params
-
-                    summary.total_pages_processed += 1
-
-                    if self._stop_requested:
-                        summary.completion_reason = "stopped_by_user"
-                        break
-
-                    # 4. Navigate to Next Page
-                    if limiter:
-                        await limiter.acquire(should_stop=lambda: self._stop_requested)
-                    if self._stop_requested:
-                        summary.completion_reason = "stopped_by_user"
-                        break
-                    has_next = await self._go_to_next_page(page)
-                    if not has_next:
-                        logger.info("No next page button found. Finished search results.")
-                        summary.completion_reason = "no_more_pages"
-                        break
-
-                    page_number += 1
-
+                        if self._stop_requested:
+                            break
+                        if limiter:
+                            await limiter.acquire(should_stop=lambda: self._stop_requested)
+                        if self._stop_requested:
+                            break
+                        if not await self._go_to_next_page(page):
+                            summary.completion_reason = 'no_more_pages'
+                            break
+                        resume_url = page.url
+                        page_number += 1
+                        page_committed = False
+                        failures = 0
+                    except Exception as error:
+                        if not isinstance(error, SearchPageNotReady) and not is_transient_browser_error(error):
+                            raise
+                        # Preserve the last committed page and its cards. A retry
+                        # reopens only this page, never restarts the entire search.
+                        await tabs.aclose()
+                        page = None
+                        failures += 1
+                        message = (f'страница #{page_number}: сбой загрузки, восстанавливаю сбор '
+                                   f'через {min(30, 2 ** min(failures, 5))} с — {str(error).splitlines()[0][:180]}')
+                        logger.warning(message)
+                        if on_retry:
+                            on_retry(message)
+                        await self._retry_pause(failures)
+                if self._stop_requested:
+                    summary.completion_reason = 'stopped_by_user'
+                    summary.final_status = 'cancelled'
+        except (CancelledError, GeneratorExit):
+            summary.completion_reason = 'stopped_by_user' if self._stop_requested else 'cancelled'
+            summary.final_status = 'cancelled'
+            raise
         except Exception as e:
             logger.error(f"Error during collection task '{task_id}': {e}", exc_info=True)
             summary.completion_reason = f"error: {e}"
@@ -242,24 +286,24 @@ class HHVacancyCardCollector:
                 f"Completed collection for task '{task_id}': "
                 f"pages={summary.total_pages_processed}, unique_cards={summary.unique_vacancies}, reason={summary.completion_reason}"
             )
-            yield summary
+        yield summary
 
     async def _go_to_next_page(self, page: Page) -> bool:
         next_button = None
         for sel in self.NEXT_PAGE_SELECTORS:
-            try:
-                elem = await page.query_selector(sel)
-                if elem and await elem.is_visible() and await elem.is_enabled():
-                    next_button = elem
-                    break
-            except Exception:
-                pass
+            elem = await page.query_selector(sel)
+            if elem and await elem.is_visible() and await elem.is_enabled():
+                next_button = elem
+                break
 
         if not next_button:
             return False
 
         logger.info("Clicking next page button...")
         old_url = page.url
+        previous_cards = await page.evaluate('''() => Array.from(
+            document.querySelectorAll('[data-qa="vacancy-serp__vacancy"] [data-qa="serp-item__title"]')
+        ).map(link => link.href.split('?')[0]).join('|')''')
         await next_button.click()
 
         try:
@@ -268,8 +312,18 @@ class HHVacancyCardCollector:
                 arg=old_url,
                 timeout=10000,
             )
-        except Exception:
-            await asyncio.sleep(2.0)
+            # HH changes history before its asynchronous search response arrives.
+            # A stable count alone can still describe the preceding 50 cards.
+            await page.wait_for_function('''({previous, emptySelector}) => {
+                const links = Array.from(document.querySelectorAll(
+                    '[data-qa="vacancy-serp__vacancy"] [data-qa="serp-item__title"]'));
+                const current = links.map(link => link.href.split('?')[0]).join('|');
+                const empty = document.querySelector(emptySelector);
+                return (links.length > 0 && current !== previous) ||
+                    (empty && empty.getClientRects().length > 0 && links.length === 0);
+            }''', arg={'previous': previous_cards, 'emptySelector': self.EMPTY_RESULTS_SELECTOR}, timeout=30000)
+        except PlaywrightTimeoutError as error:
+            raise SearchPageNotReady('HH не загрузил выдачу следующей страницы') from error
 
         await page.evaluate("window.scrollTo(0, 0)")
         await asyncio.sleep(0.5)

@@ -7,6 +7,7 @@ from playwright.async_api import Page
 
 from src.collector.page_guard import HHPageGuard
 from src.collector.popup_handler import PopupHandler
+from src.browser.errors import is_transient_browser_error
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +99,8 @@ class ScrollEngine:
                 try:
                     await on_step_callback()
                 except Exception as e:
+                    if is_transient_browser_error(e):
+                        raise
                     logger.warning(f"Error executing scroll step callback: {e}")
 
             # Evaluate scroll metrics

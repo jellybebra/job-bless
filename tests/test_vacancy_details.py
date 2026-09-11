@@ -103,6 +103,39 @@ async def test_reader_checks_stop_after_rate_limit_before_navigation():
     reader.page.goto.assert_not_awaited()
 
 
+async def test_reader_retries_same_vacancy_after_browser_crash(monkeypatch):
+    from playwright.async_api import Error
+    from src.collector import detail_parser
+    monkeypatch.setattr(detail_parser, 'asyncio', SimpleNamespace(sleep=AsyncMock()))
+    reader = VacancyDetailsReader(BrowserConfig(), limiter=None, should_stop=lambda: False)
+    reader.page = SimpleNamespace(url='https://hh.ru/vacancy/42')
+    connection = SimpleNamespace(__aexit__=AsyncMock())
+    reader.connection = connection
+    result = parse_details(snapshot(), '42')
+    reader._read = AsyncMock(side_effect=[Error('Page.goto: Target crashed'), result])
+    card = VacancyCard(external_id='42', url='https://hh.ru/vacancy/42')
+    assert await reader.read(card) is result
+    assert reader._read.await_count == 2
+    assert all(call.args == (card,) for call in reader._read.await_args_list)
+    connection.__aexit__.assert_awaited_once()
+    assert reader.page is None
+
+
+async def test_reader_retry_wait_remains_stoppable(monkeypatch):
+    from playwright.async_api import Error
+    from src.collector import detail_parser
+    stopped = False
+    async def stop_during_wait(_):
+        nonlocal stopped
+        stopped = True
+    monkeypatch.setattr(detail_parser, 'asyncio', SimpleNamespace(sleep=stop_during_wait, CancelledError=asyncio.CancelledError))
+    reader = VacancyDetailsReader(BrowserConfig(), limiter=None, should_stop=lambda: stopped)
+    reader._read = AsyncMock(side_effect=Error('Page.goto: Target crashed'))
+    with pytest.raises(asyncio.CancelledError):
+        await reader.read(VacancyCard(external_id='42', url='https://hh.ru/vacancy/42'))
+    reader._read.assert_awaited_once()
+
+
 @pytest.fixture
 def client(tmp_path):
     config = Config.load('configs/config.yaml')

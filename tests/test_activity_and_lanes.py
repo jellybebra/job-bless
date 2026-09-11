@@ -567,15 +567,17 @@ async def test_wait_returns_only_after_the_list_stops_growing():
     assert found == 50  # not the 20 that were there at first
 
 
-async def test_wait_gives_up_on_an_empty_result_page():
-    from src.collector.collector import HHVacancyCardCollector
+async def test_wait_retries_timeout_without_claiming_results_are_empty():
+    from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+    from src.collector.collector import HHVacancyCardCollector, SearchPageNotReady
 
     class EmptyPage(GrowingListPage):
+        url = 'https://hh.ru/search/vacancy'
         async def wait_for_selector(self, selector, **kwargs):
-            raise TimeoutError("no cards")
+            raise PlaywrightTimeoutError("no cards")
 
-    found = await HHVacancyCardCollector()._wait_for_cards(EmptyPage([0]), timeout_sec=1, poll_sec=0)
-    assert found == 0
+    with pytest.raises(SearchPageNotReady):
+        await HHVacancyCardCollector()._wait_for_cards(EmptyPage([0]), timeout_sec=1, poll_sec=0)
 
 
 async def test_wait_respects_the_timeout_if_the_list_never_settles():
