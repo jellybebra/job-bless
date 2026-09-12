@@ -76,7 +76,7 @@ async def test_idle_web_session_keeps_context_and_snapshots_after_last_lane(tmp_
     shared = SharedBrowserSession()
     shared.keep_alive = True
     context = SimpleNamespace(storage_state=AsyncMock(return_value={"cookies": [], "origins": []}))
-    browser = SimpleNamespace(is_connected=lambda: True, close=AsyncMock())
+    browser = SimpleNamespace(is_connected=lambda: True, close=AsyncMock(), contexts=[context])
 
     async def connect(config):
         shared._config, shared._browser, shared._context = config, browser, context
@@ -104,6 +104,29 @@ async def test_failed_snapshot_keeps_previous_login(tmp_path):
         await save_storage_state(context, path)
     assert json.loads(path.read_text()) == {"cookies": ["previous"]}
     assert not path.with_suffix(".pending.json").exists()
+
+
+async def test_connected_browser_replaces_closed_context():
+    shared = SharedBrowserSession()
+    closed, current = object(), object()
+    shared._browser = SimpleNamespace(is_connected=lambda: True, contexts=[current])
+    shared._context = closed
+    shared._pick_context = AsyncMock(return_value=current)
+    _, restored = await shared.acquire(BrowserConfig())
+    assert restored is current
+    assert shared._users == 1
+    shared._pick_context.assert_awaited_once()
+
+
+async def test_connection_keeps_transient_failure_retryable():
+    from playwright.async_api import Error
+    from src.browser.connection import connect_browser
+    from src.browser.errors import is_transient_browser_error
+    error = Error('BrowserType.connect: connect ECONNREFUSED 172.20.0.2:3000')
+    playwright = SimpleNamespace(firefox=SimpleNamespace(connect=AsyncMock(side_effect=error)))
+    with pytest.raises(Error) as caught:
+        await connect_browser(playwright, BrowserConfig(endpoint='ws://hh:3000/hh'))
+    assert is_transient_browser_error(caught.value)
 
 
 async def test_forget_closes_context_and_never_resaves_its_auth(tmp_path):

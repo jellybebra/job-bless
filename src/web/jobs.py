@@ -126,10 +126,11 @@ async def collect_job(ctx: TaskContext) -> Dict[str, Any]:
         task_id=run_id,
         scroller_config=scroller_config,
         limiter=ctx.limiter,
+        on_retry=ctx.log,
     )
 
     detailed = detail_errors = 0
-    reader = VacancyDetailsReader(browser_config, limiter=ctx.limiter, should_stop=ctx.should_stop)
+    reader = VacancyDetailsReader(browser_config, limiter=ctx.limiter, should_stop=ctx.should_stop, on_retry=ctx.log)
     try:
         async with reader:
             async for item in stream:

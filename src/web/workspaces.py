@@ -160,7 +160,7 @@ class WorkspacePool:
                 image, name=name, hostname=name, network=network,
                 labels={LABEL: item.key, "job-bless.service": service, "traefik.enable": "false"},
                 environment=environment, user="1000:1000", init=True,
-                mem_limit={"app": "384m", "hh": "1024m", "google": "1536m"}[service],
+                mem_limit={"app": "384m", "hh": "2048m", "google": "1536m"}[service],
                 nano_cpus=1_000_000_000, shm_size="256m", cap_drop=["ALL"],
                 security_opt=["no-new-privileges:true"],
                 volumes={f"{self.host_root}/{item.key}/{service}": {"bind": mount, "mode": "rw"}},

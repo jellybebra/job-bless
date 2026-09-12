@@ -67,6 +67,9 @@ class SharedBrowserSession:
             if not self.is_connected:
                 await self._disconnect()  # drop a stale connection, if any
                 await self._connect(config)
+            elif self._context not in self._browser.contexts:
+                # The browser can survive while its context is closed/crashes.
+                self._context = await self._pick_context()
             self._users += 1
             logger.debug("Browser session acquired (users=%d).", self._users)
             return self._browser, self._context

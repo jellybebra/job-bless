@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 from playwright.async_api import Page
 
 from src.browser.connector import BrowserConnector, HH_URL_RE
+from src.browser.errors import is_transient_browser_error
 from src.browser.intervention import HHInterventionRequired
 from src.collector.page_guard import HHPageGuard
 from src.db.models import VacancyCard, VacancyDetails
@@ -142,12 +143,13 @@ def parse_details(data: dict, external_id: str) -> VacancyDetails:
 
 
 class VacancyDetailsReader:
-    """Reuse one extra tab while the collector keeps its search page open."""
+    """Keep at most one extra tab; release each document after reading it."""
 
-    def __init__(self, browser_config, *, limiter, should_stop):
+    def __init__(self, browser_config, *, limiter, should_stop, on_retry=None):
         self.config = browser_config
         self.limiter = limiter
         self.should_stop = should_stop
+        self.on_retry = on_retry
         self.page = None
         self.connection = None
 
@@ -156,8 +158,13 @@ class VacancyDetailsReader:
         return self
 
     async def __aexit__(self, *exc):
+        await self._release_page(*exc)
+
+    async def _release_page(self, *exc):
         if self.connection:
-            await self.connection.__aexit__(*exc)
+            connection, self.connection = self.connection, None
+            self.page = None
+            await connection.__aexit__(*(exc or (None, None, None)))
 
     def _check_stop(self):
         if self.should_stop():
@@ -167,6 +174,32 @@ class VacancyDetailsReader:
         self._check_stop()
         if not card.external_id.isdigit() or not HH_URL_RE.match(card.url):
             raise ValueError('Нет прямой ссылки на вакансию HH')
+        failures = 0
+        while True:
+            try:
+                result = await self._read(card)
+                # Long-lived HH tabs retain earlier documents and exhaust the
+                # browser container during a full page of vacancy details.
+                await self._release_page()
+                return result
+            except Exception as error:
+                if not is_transient_browser_error(error):
+                    raise
+                if self.page is not None:
+                    await HHPageGuard().check_page_state(self.page, is_navigation_step=True)
+                await self._release_page()
+                failures += 1
+                remaining = min(30, 2 ** min(failures, 5))
+                if self.on_retry:
+                    self.on_retry(f'вакансия {card.external_id}: восстанавливаю браузер через {remaining} с')
+                while remaining > 0:
+                    self._check_stop()
+                    interval = min(.25, remaining)
+                    await asyncio.sleep(interval)
+                    remaining -= interval
+
+    async def _read(self, card):
+        self._check_stop()
         if self.page is None:
             connector = BrowserConnector(replace(self.config, close_stale_tabs=False), limiter=self.limiter)
             self.connection = connector.connect()

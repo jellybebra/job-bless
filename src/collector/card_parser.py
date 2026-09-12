@@ -4,6 +4,7 @@ from typing import List, Tuple, Optional, Dict, Any
 from playwright.async_api import Page, ElementHandle
 
 from src.db.models import VacancyCard
+from src.browser.errors import is_transient_browser_error
 
 logger = logging.getLogger(__name__)
 
@@ -29,20 +30,19 @@ class VacancyCardParser:
         self, page: Page, page_number: int = 1, search_url: str = ""
     ) -> List[Tuple[VacancyCard, Optional[str]]]:
         cards: List[Tuple[VacancyCard, Optional[str]]] = []
-        try:
-            elements = await page.query_selector_all(HHSelectors.VACANCY_CARD)
-            logger.info(f"Found {len(elements)} vacancy card elements on page #{page_number}")
+        # A crashed or disconnected page is not an empty search result.
+        elements = await page.query_selector_all(HHSelectors.VACANCY_CARD)
+        logger.info(f"Found {len(elements)} vacancy card elements on page #{page_number}")
 
-            for pos, elem in enumerate(elements, start=1):
-                try:
-                    card = await self.parse_single_card(elem, page_number=page_number, position=pos, search_url=search_url)
-                    if card and card.external_id:
-                        cards.append((card, None))
-                except Exception as e:
-                    logger.warning(f"Error parsing card #{pos} on page {page_number}: {e}")
-
-        except Exception as e:
-            logger.error(f"Error querying vacancy card elements: {e}")
+        for pos, elem in enumerate(elements, start=1):
+            try:
+                card = await self.parse_single_card(elem, page_number=page_number, position=pos, search_url=search_url)
+                if card and card.external_id:
+                    cards.append((card, None))
+            except Exception as e:
+                if is_transient_browser_error(e):
+                    raise
+                logger.warning(f"Error parsing card #{pos} on page {page_number}: {e}")
 
         return cards
 
